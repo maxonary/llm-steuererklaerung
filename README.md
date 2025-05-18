@@ -45,15 +45,16 @@ python main.py --generate-travel-report 2024 --lang en --use-cache --parallel
 Enables caching of LLM results and multi-threaded processing to speed up report generation.
 
 ```bash
-python main.py --generate-bewirtungsbeleg
+python main.py --generate-bewirtungsbeleg --use-llm-for-beleg
 ```
-Prompts you to step-by-step generate a filled-in Bewirtungsbeleg (entertainment expense form) for each invoice found in the `Invoices/Food/` folder.
+Prompts you to generate a Bewirtungsbeleg for each invoice in the `Invoices/Food/` folder, with fields automatically suggested by an LLM (ChatGPT or Ollama) and confirmed by you in the terminal.
 
 ### Optional Flags
 
 - `--use-cache`: Saves LLM responses to disk and reuses them to avoid duplicate API or model calls.
 - `--parallel`: Uses multi-threading to process invoices faster (especially helpful for many PDFs).
 - `--generate-bewirtungsbeleg`: Interactively create Bewirtungsbelege for restaurant/meal invoices.
+ - `--use-llm-for-beleg`: Use an LLM to autofill suggested values for Bewirtungsbeleg fields.
 
 ```bash
 python main.py --full-run --calendar-context calendar.ics
