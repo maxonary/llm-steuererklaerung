@@ -1,3 +1,5 @@
+DEFAULT_SIGNATURE_PATH = "signature.png"
+DEFAULT_SIGNATURE_NAME = "Max Mustermann"
 import os
 from reportlab.lib.pagesizes import A4
 from reportlab.pdfgen import canvas
@@ -192,12 +194,11 @@ def generate_filled_pdf(info_dict, output_pdf_path="bewirtungsbeleg_ausgefuellt.
     box(40, height - 430, 200, 20)
     c.drawString(45, height - 425, info_dict.get('ort_datum_unterschrift', ''))
     label("Unterschrift des Gastgebers:", 270, height - 400)
-    box(270, height - 430, 280, 20)
-    # Optionally insert signature image
+    # Optionally insert signature image (no signature box anymore)
     if signature_img_path and os.path.isfile(signature_img_path):
-        # Place image inside signature box (size: 280x20, adjust as needed)
+        # Place image at x=275, y=height-445, max width=180, height=25
         try:
-            c.drawImage(signature_img_path, 275, height - 428, width=120, height=16, preserveAspectRatio=True, mask='auto')
+            c.drawImage(signature_img_path, 275, height - 445, width=180, height=25, preserveAspectRatio=True, mask='auto')
         except Exception as e:
             print(f"Fehler beim Einfügen der Signatur: {e}")
     # Save PDF
@@ -209,17 +210,41 @@ def insert_signature_area():
     """
     Ask user if they want to insert a signature image.
     Return path to the image, or None.
+    Always ask:
+      1. Add signature image? (y/n/custom)
+      2. If y, use default if it exists
+      3. If custom, prompt for a custom path
+      4. If n, return None
     """
-    sig_path = input("Pfad zu Unterschriftsbild (PNG/JPG, Enter zum Überspringen): ").strip()
-    if sig_path and os.path.isfile(sig_path):
-        return sig_path
-    return None
+    while True:
+        resp = input("Unterschrift als Bild einfügen? (y/n/custom): ").strip().lower()
+        if resp == "y":
+            if os.path.isfile(DEFAULT_SIGNATURE_PATH):
+                print(f"Standard-Signaturbild gefunden: {DEFAULT_SIGNATURE_PATH}")
+                return DEFAULT_SIGNATURE_PATH
+            else:
+                print("Kein Standard-Signaturbild gefunden.")
+                continue
+        elif resp == "n":
+            return None
+        elif resp == "custom":
+            custom_path = input("Pfad zum eigenen Unterschriftsbild (PNG/JPG): ").strip()
+            if custom_path and os.path.isfile(custom_path):
+                return custom_path
+            else:
+                print("Datei nicht gefunden. Bitte erneut versuchen.")
+                continue
+        else:
+            print("Bitte 'y', 'n' oder 'custom' eingeben.")
 
 def attach_to_invoice(original_pdf, filled_beleg_pdf, output_path=None):
     """
     Prepend filled Bewirtungsbeleg to the invoice PDF and save result.
+    Write to a temporary file first, only replacing the original if successful.
     """
-    output_path = output_path or f"combined_{os.path.basename(original_pdf)}"
+    # Default output_path: overwrite original invoice
+    output_path = output_path or original_pdf
+    tmp_path = f"{original_pdf}.tmp.pdf"
     merger = PdfWriter()
     # Add filled beleg
     with open(filled_beleg_pdf, "rb") as beleg_f:
@@ -233,10 +258,19 @@ def attach_to_invoice(original_pdf, filled_beleg_pdf, output_path=None):
             merger.add_page(page)
     # Add marker to first page (metadata)
     merger.add_metadata({"/BewirtungsbelegPrepended": "True"})
-    with open(output_path, "wb") as out_f:
-        merger.write(out_f)
-    print(f"Neue PDF gespeichert als {output_path}")
-    return output_path
+    # Write to temporary file first
+    try:
+        with open(tmp_path, "wb") as out_f:
+            merger.write(out_f)
+        # If write succeeds, replace the original
+        os.replace(tmp_path, output_path)
+        print(f"Neue PDF gespeichert als {output_path}")
+        return output_path
+    except Exception as e:
+        print(f"[!] Fehler beim Schreiben der kombinierten PDF: {e}")
+        if os.path.exists(tmp_path):
+            os.remove(tmp_path)
+        return None
 
 def check_for_beleg_marker(pdf_path):
     """
@@ -251,7 +285,12 @@ def check_for_beleg_marker(pdf_path):
         return False
 
 def main(invoice_path=None, use_llm=False):
+    global DEFAULT_SIGNATURE_NAME
     print("==== Bewirtungsbeleg-Generator ====")
+    # Ask user to confirm or update DEFAULT_SIGNATURE_NAME at start
+    name_input = input(f"Name für Unterschrift bestätigen oder ändern [{DEFAULT_SIGNATURE_NAME}]: ").strip()
+    if name_input:
+        DEFAULT_SIGNATURE_NAME = name_input
     if not invoice_path:
         invoice_path = input("Pfad zur Rechnungs-PDF: ").strip()
     if not os.path.isfile(invoice_path):
