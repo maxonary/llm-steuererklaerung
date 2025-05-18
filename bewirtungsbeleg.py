@@ -11,21 +11,22 @@ def prompt_user_info(initial_info=None):
     Returns a dict with all necessary info.
     """
     info = initial_info.copy() if initial_info else {}
-    print("Bitte geben Sie die Informationen für den Bewirtungsbeleg ein (Enter zum Überspringen/Beibehalten):")
+    print("Bitte bestätigen oder bearbeiten Sie die vom LLM vorgeschlagenen Informationen für den Bewirtungsbeleg (Enter = übernehmen, sonst editieren):")
+
     def prompt_field(key, label, default=None):
-        val = input(f"{label} [{default if default else ''}]: ").strip()
+        shown_default = default if default is not None else ''
+        val = input(f"{label} [{shown_default}]: ").strip()
         if not val and default is not None:
             return default
         return val
+
+    # Ask for every field, always showing the LLM guess as default
     info['datum_bewirtung'] = prompt_field('datum_bewirtung', "Datum der Bewirtung", info.get('datum_bewirtung', datetime.today().strftime('%d.%m.%Y')))
     info['ort_bewirtung'] = prompt_field('ort_bewirtung', "Ort der Bewirtung (Name, Anschrift)", info.get('ort_bewirtung', ''))
     info['anlass'] = prompt_field('anlass', "Anlass der Bewirtung", info.get('anlass', ''))
-    print("Bitte geben Sie die bewirteten Personen ein (max 10, mit Komma trennen, oder leer lassen):")
-    if 'personen' in info and info['personen']:
-        personen_default = ', '.join(info['personen'])
-    else:
-        personen_default = ''
-    personen_input = input(f"Bewirtete Personen [{personen_default}]: ").strip()
+    # Personen: always prompt with default, allow edit
+    personen_default = ', '.join(info['personen']) if 'personen' in info and info['personen'] else ''
+    personen_input = input(f"Bewirtete Personen (max 10, mit Komma trennen) [{personen_default}]: ").strip()
     if personen_input:
         info['personen'] = [p.strip() for p in personen_input.split(',')]
     else:
@@ -37,12 +38,68 @@ def prompt_user_info(initial_info=None):
 
 def screen_pdf_for_info(pdf_path):
     """
-    Placeholder LLM extraction: Simulate extracting info from invoice PDF.
+    Use LLM (OpenAI or Ollama) to extract Bewirtungsbeleg fields from the PDF text.
     Returns a dict with guessed values.
     """
-    print(f"Simuliere LLM-Extraktion für PDF: {pdf_path}")
-    # Placeholder: Just return empty/guessed fields
-    return {
+    print(f"Starte LLM-Extraktion für PDF: {pdf_path}")
+    # Import here to avoid dependency issues if unused
+    import importlib
+    # Extract text from PDF (reuse extract_text_from_pdf from main.py)
+    try:
+        from main import extract_text_from_pdf
+    except ImportError:
+        # fallback: do minimal extraction if import fails
+        import fitz
+        def extract_text_from_pdf(pdf_path):
+            doc = fitz.open(pdf_path)
+            text = "\n".join(page.get_text() for page in doc)
+            return text[:2000]
+    text = extract_text_from_pdf(pdf_path)
+    # Prepare prompt
+    prompt = f"""
+Du bist ein Assistent für Bewirtungsbelege. Extrahiere die folgenden Felder aus dem folgenden Bewirtungsbeleg oder Restaurantbeleg (so gut wie möglich, auch wenn nicht alle Informationen vorhanden sind):
+
+- datum_bewirtung: Datum der Bewirtung (z.B. 12.03.2024)
+- ort_bewirtung: Name und Anschrift des Restaurants
+- anlass: Anlass der Bewirtung (z.B. Geschäftsessen mit Kunde XY)
+- personen: Liste der bewirteten Personen (nur Namen, max 10)
+- rechnungsbetrag: Gesamtbetrag der Rechnung in EUR (ohne €-Zeichen)
+- trinkgeld: Trinkgeld in EUR (nur Zahl, falls erkennbar, sonst leer)
+- ort_datum_unterschrift: Ort und Datum für Unterschrift (z.B. Ort, Datum)
+
+Gib das Ergebnis als JSON-Objekt mit diesen Feldern zurück.
+
+PDF-Text:
+\"\"\"
+{text}
+\"\"\"
+"""
+    # Try OpenAI or Ollama depending on config
+    try:
+        import os
+        if os.getenv("USE_OPENAI", "False").lower() in ["1", "true", "yes"]:
+            import openai
+            model = os.getenv("OPENAI_MODEL", "gpt-3.5-turbo")
+            openai.api_key = os.getenv("OPENAI_API_KEY")
+            response = openai.ChatCompletion.create(
+                model=model,
+                messages=[{"role": "user", "content": prompt}],
+                max_tokens=512
+            )
+            content = response.choices[0].message['content']
+        else:
+            import ollama
+            model = os.getenv("MODEL", "mistral")
+            response = ollama.chat(model=model, messages=[{"role": "user", "content": prompt}])
+            content = response['message']['content']
+    except Exception as e:
+        print(f"[!] LLM-Extraktion fehlgeschlagen: {e}")
+        content = ""
+
+    # Parse JSON from LLM output
+    import json
+    import re
+    info = {
         'datum_bewirtung': '',
         'ort_bewirtung': '',
         'anlass': '',
@@ -51,6 +108,31 @@ def screen_pdf_for_info(pdf_path):
         'trinkgeld': '',
         'ort_datum_unterschrift': ''
     }
+    # Try to extract JSON block from content
+    json_match = re.search(r'\{.*\}', content, re.DOTALL)
+    if json_match:
+        json_str = json_match.group(0)
+        try:
+            raw = json.loads(json_str)
+            # Copy fields if present
+            for k in info:
+                if k in raw:
+                    info[k] = raw[k]
+        except Exception as e:
+            print(f"[!] Fehler beim Parsen des LLM-JSON: {e}")
+    else:
+        # fallback: try to parse simple key: value lines
+        for line in (content or "").splitlines():
+            for k in info:
+                if line.lower().startswith(k.replace("_", " ")):
+                    val = line.split(":", 1)[-1].strip()
+                    info[k] = val
+    # Ensure personen is a list
+    if isinstance(info.get('personen'), str):
+        info['personen'] = [p.strip() for p in info['personen'].split(',') if p.strip()]
+    elif not isinstance(info.get('personen'), list):
+        info['personen'] = []
+    return info
 
 def generate_filled_pdf(info_dict, output_pdf_path="bewirtungsbeleg_ausgefuellt.pdf", signature_img_path=None):
     """
