@@ -474,6 +474,7 @@ def main():
     parser.add_argument('--use-cache', action='store_true', help='Enable LLM response caching')
     parser.add_argument('--parallel', action='store_true', help='Enable multithreaded invoice processing')
     parser.add_argument('--generate-bewirtungsbeleg', action='store_true', help='Prompt to generate Bewirtungsbeleg for each food invoice')
+    parser.add_argument('--use-llm-for-beleg', action='store_true', help='Enable LLM-based autofilling for Bewirtungsbeleg')
     args = parser.parse_args()
 
     # If --full-run is used, enable all three modes
@@ -577,7 +578,7 @@ def main():
         for pdf in pdfs:
             pdf_path = os.path.join(food_dir, pdf)
             print(f"\n==== Generating Bewirtungsbeleg for: {pdf} ====")
-            generate_bewirtungsbeleg(pdf_path)
+            generate_bewirtungsbeleg(pdf_path, use_llm=args.use_llm_for_beleg)
 
 if __name__ == '__main__':
     main()

@@ -250,7 +250,7 @@ def check_for_beleg_marker(pdf_path):
     except Exception as e:
         return False
 
-def main(invoice_path=None):
+def main(invoice_path=None, use_llm=False):
     print("==== Bewirtungsbeleg-Generator ====")
     if not invoice_path:
         invoice_path = input("Pfad zur Rechnungs-PDF: ").strip()
@@ -263,8 +263,11 @@ def main(invoice_path=None):
         if proceed != "j":
             print("Abbruch.")
             return
-    # Simulate screening
-    extracted = screen_pdf_for_info(invoice_path)
+    # Simulate screening only if use_llm is True
+    if use_llm:
+        extracted = screen_pdf_for_info(invoice_path)
+    else:
+        extracted = {}
     # Prompt user for all fields
     info = prompt_user_info(extracted)
     # Optional signature
