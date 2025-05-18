@@ -3,9 +3,11 @@ from reportlab.lib.pagesizes import A4
 from reportlab.pdfgen import canvas
 from PyPDF2 import PdfReader, PdfWriter
 from datetime import datetime
+from dotenv import load_dotenv
+load_dotenv()
 
 DEFAULT_SIGNATURE_PATH = os.getenv("DEFAULT_SIGNATURE_PATH", "signature.png")
-DEFAULT_SIGNATURE_NAME = os.getenv("DEFAULT_SIGNATURE_NAME", "Unterschrift")
+DEFAULT_SIGNATURE_NAME = os.getenv("DEFAULT_SIGNATURE_NAME", "")
 
 def prompt_user_info(initial_info=None):
     """
