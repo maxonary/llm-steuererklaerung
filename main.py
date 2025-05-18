@@ -1,4 +1,5 @@
 import os
+from bewirtungsbeleg import main as generate_bewirtungsbeleg
 import time
 import pickle
 import base64
@@ -472,6 +473,7 @@ def main():
     parser.add_argument('--lang', default='en', choices=['de', 'en'], help='Language for Reisekosten report export (en or de)')
     parser.add_argument('--use-cache', action='store_true', help='Enable LLM response caching')
     parser.add_argument('--parallel', action='store_true', help='Enable multithreaded invoice processing')
+    parser.add_argument('--generate-bewirtungsbeleg', action='store_true', help='Prompt to generate Bewirtungsbeleg for each food invoice')
     args = parser.parse_args()
 
     # If --full-run is used, enable all three modes
@@ -560,6 +562,22 @@ def main():
 
     if args.process_local:
         process_dropped_invoices(rename_by_date=args.rename_by_date, calendar_context=CALENDAR_CONTEXT)
+
+    # ---- Bewirtungsbeleg generator ----
+    if args.generate_bewirtungsbeleg:
+        # Iterate over Food folder in SORTED_DIR
+        food_dir = os.path.join(SORTED_DIR, "Food")
+        if not os.path.isdir(food_dir):
+            print(f"[!] Food directory not found: {food_dir}")
+            return
+        pdfs = [f for f in os.listdir(food_dir) if f.lower().endswith('.pdf')]
+        if not pdfs:
+            print(f"[i] No PDFs found in {food_dir}.")
+            return
+        for pdf in pdfs:
+            pdf_path = os.path.join(food_dir, pdf)
+            print(f"\n==== Generating Bewirtungsbeleg for: {pdf} ====")
+            generate_bewirtungsbeleg(pdf_path)
 
 if __name__ == '__main__':
     main()
