@@ -1,10 +1,11 @@
-DEFAULT_SIGNATURE_PATH = "signature.png"
-DEFAULT_SIGNATURE_NAME = "Max Mustermann"
 import os
 from reportlab.lib.pagesizes import A4
 from reportlab.pdfgen import canvas
 from PyPDF2 import PdfReader, PdfWriter
 from datetime import datetime
+
+DEFAULT_SIGNATURE_PATH = os.getenv("DEFAULT_SIGNATURE_PATH", "signature.png")
+DEFAULT_SIGNATURE_NAME = os.getenv("DEFAULT_SIGNATURE_NAME", "Unterschrift")
 
 def prompt_user_info(initial_info=None):
     """
