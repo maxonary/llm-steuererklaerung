@@ -34,9 +34,14 @@ def prompt_user_info(initial_info=None):
         info['personen'] = [p.strip() for p in personen_input.split(',')]
     else:
         info['personen'] = info.get('personen', [])
+    # Ensure host is always included in the list, case-insensitively and trimmed
+    if DEFAULT_SIGNATURE_NAME:
+        normalized_persons = [p.strip().lower() for p in info['personen']]
+        if DEFAULT_SIGNATURE_NAME.strip().lower() not in normalized_persons:
+            info['personen'].append(DEFAULT_SIGNATURE_NAME)
     info['rechnungsbetrag'] = prompt_field('rechnungsbetrag', "Rechnungsbetrag (EUR)", info.get('rechnungsbetrag', ''))
     info['trinkgeld'] = prompt_field('trinkgeld', "Trinkgeld (EUR)", info.get('trinkgeld', ''))
-    info['ort_datum_unterschrift'] = prompt_field('ort_datum_unterschrift', "Ort, Datum (Unterschrift)", info.get('ort_datum_unterschrift', info.get('ort_bewirtung', '')))
+    info['ort_datum_unterschrift'] = prompt_field('ort_datum_unterschrift', "Ort, Datum (Unterschrift)", info.get('ort_datum_unterschrift', ''))
     return info
 
 def screen_pdf_for_info(pdf_path):
@@ -135,6 +140,22 @@ PDF-Text:
         info['personen'] = [p.strip() for p in info['personen'].split(',') if p.strip()]
     elif not isinstance(info.get('personen'), list):
         info['personen'] = []
+
+    # Extract city from ort_bewirtung for default ort_datum_unterschrift
+    ort_bewirtung_lines = info.get('ort_bewirtung', '').splitlines()
+    city = ''
+    postal_code_pattern = re.compile(r'^\s*\d{5}\b')
+    for line in ort_bewirtung_lines:
+        if postal_code_pattern.match(line):
+            # Split line by spaces, remove postal code, rest is city
+            parts = line.strip().split()
+            if len(parts) > 1:
+                city = ' '.join(parts[1:])
+                break
+    # Set default ort_datum_unterschrift if empty
+    if not info.get('ort_datum_unterschrift') and city:
+        info['ort_datum_unterschrift'] = city
+
     return info
 
 def generate_filled_pdf(info_dict, output_pdf_path="bewirtungsbeleg_ausgefuellt.pdf", signature_img_path=None):
@@ -288,10 +309,6 @@ def check_for_beleg_marker(pdf_path):
 def main(invoice_path=None, use_llm=False):
     global DEFAULT_SIGNATURE_NAME
     print("==== Bewirtungsbeleg-Generator ====")
-    # Ask user to confirm or update DEFAULT_SIGNATURE_NAME at start
-    name_input = input(f"Name für Unterschrift bestätigen oder ändern [{DEFAULT_SIGNATURE_NAME}]: ").strip()
-    if name_input:
-        DEFAULT_SIGNATURE_NAME = name_input
     if not invoice_path:
         invoice_path = input("Pfad zur Rechnungs-PDF: ").strip()
     if not os.path.isfile(invoice_path):
@@ -310,6 +327,10 @@ def main(invoice_path=None, use_llm=False):
         extracted = {}
     # Prompt user for all fields
     info = prompt_user_info(extracted)
+    # Ask user to confirm or update DEFAULT_SIGNATURE_NAME after document content, before signature insertion
+    name_input = input(f"Name für Unterschrift bestätigen oder ändern [{DEFAULT_SIGNATURE_NAME}]: ").strip()
+    if name_input:
+        DEFAULT_SIGNATURE_NAME = name_input
     # Optional signature
     sig_path = insert_signature_area()
     # Generate filled PDF
