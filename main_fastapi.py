@@ -6,10 +6,12 @@ from google_auth_oauthlib.flow import Flow
 from googleapiclient.discovery import build
 import tempfile
 import ollama
+from dotenv import load_dotenv
 
+load_dotenv()  # Load environment variables from .env file
 # --- Supabase Setup ---
-SUPABASE_URL = "YOUR_SUPABASE_URL"
-SUPABASE_KEY = "YOUR_SUPABASE_KEY"
+SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 # --- FastAPI App ---
@@ -26,27 +28,27 @@ user_credentials = {}
 async def upload_file(file: UploadFile = File(...)):
     contents = await file.read()
     # Upload to Supabase Storage
-    supabase.storage().from_('documents').upload(file.filename, contents, {"content-type": file.content_type})
+    supabase.storage.from_('invoices').upload(file.filename, contents, {"content-type": file.content_type})
     # Store metadata in Supabase DB (optional)
-    supabase.table('documents').insert({"filename": file.filename}).execute()
-    return {"filename": file.filename}
+    supabase.table('invoices').insert({"pdfUrl": file.filename}).execute()
+    return {"pdfUrl": file.filename}
 
 @app.get("/retrieve")
 def retrieve_file(filename: str = Query(...)):
     # Download file from Supabase Storage
-    res = supabase.storage().from_('documents').download(filename)
+    res = supabase.storage.from_('invoices').download(filename)
     return JSONResponse(content={"file": res})
 
 @app.post("/process")
 def process_file(filename: str = Query(...)):
     # Download file from Supabase Storage
-    file_bytes = supabase.storage().from_('documents').download(filename)
+    file_bytes = supabase.storage.from_('invoices').download(filename)
     # Use Ollama for LLM processing (example: summarize file)
     prompt = f"Summarize the following document:\n\n{file_bytes[:2000].decode(errors='ignore')}"
     response = ollama.chat(model="mistral", messages=[{"role": "user", "content": prompt}])
     summary = response['message']['content']
     # Store result in Supabase DB
-    supabase.table('results').insert({"filename": filename, "summary": summary}).execute()
+    supabase.table('results').insert({"pdfUrl": filename, "summary": summary}).execute()
     return {"status": "processed", "summary": summary}
 
 @app.get("/gmail/auth-url")
