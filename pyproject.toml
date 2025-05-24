@@ -21,4 +21,5 @@ dependencies = [
     "pypdf2>=3.0.1",
     "reportlab>=4.4.1",
     "watchdog>=6.0.0",
+    "supabase>=2.3.0",
 ]

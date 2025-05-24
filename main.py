@@ -19,6 +19,17 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
 from ics import Calendar
+from supabase import create_client, Client
+import json
+import uuid
+from datetime import datetime
+
+# --- Supabase Setup ---
+SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_KEY = os.getenv("SUPABASE_KEY")
+if not SUPABASE_URL or not SUPABASE_KEY:
+    raise ValueError("SUPABASE_URL and SUPABASE_KEY must be set in .env file")
+supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 def load_reviewed_ids(file_path="review_queue.csv"):
     if not os.path.exists(file_path):
@@ -159,6 +170,7 @@ def download_attachments(service, message_id, save_dir):
                 subject = header['value']
                 break
         write_to_review_queue(subject, "(no attachment)", "No PDF attachments", message_id)
+
 # -------------- Extract Text from PDF --------------
 def extract_text_from_pdf(pdf_path):
     doc = fitz.open(pdf_path)
@@ -271,7 +283,16 @@ def download_pdf_from_url(url, save_dir, subject=None, message_id=None):
     return None
 
 # -------------- Categorize Invoice --------------
-def categorize_invoice(text, model=MODEL):
+def categorize_invoice(text, model=MODEL, pdf_path=None):
+    """
+    Categorize invoice and store in Supabase.
+    Args:
+        text: Extracted text from PDF
+        model: LLM model to use
+        pdf_path: Optional path to the PDF file for storage
+    Returns:
+        category: The categorized category
+    """
     prompt = f"""
 You are an invoice assistant. Categorize this invoice into one of the following categories:
 
@@ -295,10 +316,75 @@ Category:
             messages=[{"role": "user", "content": prompt}],
             max_tokens=10
         )
-        return response.choices[0].message['content'].strip()
+        category = response.choices[0].message['content'].strip()
     else:
         response = ollama.chat(model=model, messages=[{"role": "user", "content": prompt}])
-        return response['message']['content'].strip()
+        category = response['message']['content'].strip()
+
+    # If PDF path is provided, process and store in Supabase
+    if pdf_path:
+        try:
+            # Generate a unique ID for this invoice
+            invoice_id = str(uuid.uuid4())
+            
+            # Upload PDF to Supabase Storage
+            with open(pdf_path, 'rb') as f:
+                pdf_bytes = f.read()
+                storage_path = f"invoices/{invoice_id}.pdf"
+                supabase.storage().from_('documents').upload(storage_path, pdf_bytes)
+                pdf_url = supabase.storage().from_('documents').get_public_url(storage_path)
+
+            # Extract structured data using LLM
+            extraction_prompt = f"""
+Extract the following information from this invoice:
+- amount: Total amount (numeric value only)
+- tipAmount: Tip amount if present (numeric value only)
+- date: Date of the invoice (YYYY-MM-DD format)
+- location: Business name and address
+- reason: Purpose or description of the expense
+- participants: List of people involved (if any)
+- signingData: Location and date for signature
+
+Invoice text:
+{text}
+
+Respond in JSON format.
+"""
+            if USE_OPENAI_KEY:
+                response = openai.ChatCompletion.create(
+                    model=OPENAI_MODEL,
+                    messages=[{"role": "user", "content": extraction_prompt}],
+                    max_tokens=512
+                )
+                extracted_data = json.loads(response.choices[0].message['content'])
+            else:
+                response = ollama.chat(model=model, messages=[{"role": "user", "content": extraction_prompt}])
+                extracted_data = json.loads(response['message']['content'])
+
+            # Prepare invoice data for Supabase
+            invoice_data = {
+                "id": invoice_id,
+                "amount": extracted_data.get("amount"),
+                "tipAmount": extracted_data.get("tipAmount"),
+                "date": extracted_data.get("date"),
+                "location": extracted_data.get("location"),
+                "reason": extracted_data.get("reason"),
+                "participants": extracted_data.get("participants"),
+                "signingData": extracted_data.get("signingData"),
+                "status": "submitted",
+                "pdfUrl": pdf_url,
+                "category": category,
+                "created_at": datetime.now().isoformat()
+            }
+
+            # Insert into Supabase database
+            supabase.table('invoices').insert(invoice_data).execute()
+            print(f"[✓] Invoice stored in Supabase with ID: {invoice_id}")
+
+        except Exception as e:
+            print(f"[!] Error storing invoice in Supabase: {e}")
+
+    return category
 
 # -------------- Sort File to Category Folder --------------
 def sort_file_to_category(file_path, category, text=None, rename_by_date=False, base_dir=SORTED_DIR, calendar_context=None):
@@ -399,7 +485,7 @@ class InvoiceHandler(FileSystemEventHandler):
                 text = extract_text_from_pdf(file_path)
                 print(f"[i] Categorizing manual file: {fname}")
                 print(f"[i] Extracted text preview: {text[:100]}...")
-                category = categorize_invoice(text)
+                category = categorize_invoice(text, pdf_path=file_path)
                 sort_file_to_category(file_path, category, text, self.rename_by_date, calendar_context=self.calendar_context)
             except Exception as e:
                 print(f"[!] Error processing {fname}: {e}")
@@ -438,7 +524,7 @@ def process_dropped_invoices(rename_by_date=False, calendar_context=None):
                     text = extract_text_from_pdf(file_path)
                     print(f"[i] Categorizing manual file: {fname}")
                     print(f"[i] Extracted text preview: {text[:100]}...")
-                    category = categorize_invoice(text)
+                    category = categorize_invoice(text, pdf_path=file_path)
                     sort_file_to_category(file_path, category, text, rename_by_date, calendar_context=calendar_context)
                 except Exception as e:
                     print(f"[!] Error processing {fname}: {e}")
@@ -524,7 +610,7 @@ def main():
                 text = extract_text_from_pdf(file_path)
                 print(f"[i] Categorizing file: {file_path}")
                 print(f"[i] Extracted text preview: {text[:100]}...")
-                category = categorize_invoice(text)
+                category = categorize_invoice(text, pdf_path=file_path)
                 sort_file_to_category(file_path, category, text, args.rename_by_date, calendar_context=CALENDAR_CONTEXT)
 
             links = extract_invoice_links_with_ollama(service, msg['id'])
@@ -535,7 +621,7 @@ def main():
                         text = extract_text_from_pdf(file_path_from_link)
                         print(f"[i] Categorizing file: {file_path_from_link}")
                         print(f"[i] Extracted text preview: {text[:100]}...")
-                        category = categorize_invoice(text)
+                        category = categorize_invoice(text, pdf_path=file_path_from_link)
                         sort_file_to_category(file_path_from_link, category, text, args.rename_by_date, calendar_context=CALENDAR_CONTEXT)
                         return True
                     return False
