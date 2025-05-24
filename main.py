@@ -19,6 +19,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
 from ics import Calendar
+from supabase import create_client
 
 def load_reviewed_ids(file_path="review_queue.csv"):
     if not os.path.exists(file_path):
@@ -352,6 +353,107 @@ def sort_file_to_category(file_path, category, text=None, rename_by_date=False, 
     shutil.move(file_path, new_path)
     print(f"[→] Sorted into: {category} as {os.path.basename(new_path)}")
 
+
+# -------------- Extract Invoice Fields (LLM) --------------
+def extract_invoice_fields(text):
+    """
+    Extract fields like amount, tipAmount, date, location, reason, participants, signingData from invoice text using LLM.
+    Returns a dictionary with these keys.
+    """
+    prompt = f"""
+You are an invoice data extractor. From the following invoice text, extract the following fields if possible:
+- amount: The total amount paid (number, in EUR if possible)
+- tipAmount: Any tip (number, in EUR), if present
+- date: The invoice date (YYYY-MM-DD if possible)
+- location: The business name or location
+- reason: Purpose of the invoice (e.g. "dinner with client", "train ticket to Berlin")
+- participants: Names of people involved (if any)
+- signingData: Any information about who signed the invoice or receipt
+
+Respond in strict JSON with these fields as keys. Leave value null if not found.
+
+Invoice:
+{text}
+
+JSON:
+"""
+    import json
+    if USE_OPENAI_KEY:
+        response = openai.ChatCompletion.create(
+            model=OPENAI_MODEL,
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=350,
+            temperature=0.0
+        )
+        content = response.choices[0].message['content'].strip()
+    else:
+        response = ollama.chat(model=MODEL, messages=[{"role": "user", "content": prompt}])
+        content = response['message']['content'].strip()
+    # Try to parse JSON
+    try:
+        data = json.loads(content)
+        return data
+    except Exception:
+        # Fallback: try to extract JSON substring and parse
+        import re
+        match = re.search(r'\{.*\}', content, re.DOTALL)
+        if match:
+            try:
+                return json.loads(match.group(0))
+            except Exception:
+                pass
+    # Return empty dict if parsing fails
+    return {
+        "amount": None,
+        "tipAmount": None,
+        "date": None,
+        "location": None,
+        "reason": None,
+        "participants": None,
+        "signingData": None
+    }
+
+
+# -------------- Upload Invoice to Supabase --------------
+def upload_invoice_to_supabase(file_path, category, text, extracted_data):
+
+    supabase_url = os.getenv("SUPABASE_URL")
+    supabase_key = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
+    client = create_client(supabase_url, supabase_key)
+
+    filename = os.path.basename(file_path)
+    storage_path = f"invoices/{filename}"
+    with open(file_path, "rb") as f:
+        file_data = f.read()
+
+    upload_response = client.storage.from_("invoices").upload(storage_path, file_data, {"content-type": "application/pdf"}, upsert = True)
+    if "error" in upload_response:
+        print(f"[!] Failed to upload PDF: {upload_response['error']}")
+        return
+
+    pdf_url = f"{supabase_url}/storage/v1/object/public/invoices/{filename}"
+
+    invoice_data = {
+        "amount": extracted_data.get("amount"),
+        "tipAmount": extracted_data.get("tipAmount"),
+        "date": extracted_data.get("date"),
+        "location": extracted_data.get("location"),
+        "reason": extracted_data.get("reason"),
+        "participants": extracted_data.get("participants"),
+        "signingData": extracted_data.get("signingData"),
+        "status": "submitted",
+        "pdfUrl": pdf_url,
+        "category": category
+    }
+
+    db_response = client.table("invoices").insert(invoice_data).execute()
+    if db_response.get("status_code") != 201:
+        print(f"[!] Failed to insert into database: {db_response}")
+    else:
+        print(f"[✓] Uploaded and inserted invoice: {filename}")
+        os.remove(file_path)
+        print(f"[✗] Deleted local file after upload: {file_path}")
+
 # -------------- Calendar Context Loader --------------
 def load_calendar_context(ics_paths):
     calendar_lookup = {}
@@ -465,7 +567,6 @@ def process_dropped_invoices(rename_by_date=False, calendar_context=None):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--scan-gmail', action='store_true', help='Enable scanning Gmail for invoice attachments and links')
-    parser.add_argument('--process-local', action='store_true', help='Enable processing of local PDFs from temp_invoices/')
     parser.add_argument('--rename-by-date', action='store_true', help='Rename files using extracted date and category')
     parser.add_argument('--calendar-context', nargs='*', help='ICS calendar files to use for filename context')
     parser.add_argument('--generate-travel-report', type=int, help='Generate Reisekosten Excel report for the given year')
@@ -475,6 +576,9 @@ def main():
     parser.add_argument('--parallel', action='store_true', help='Enable multithreaded invoice processing')
     parser.add_argument('--generate-bewirtungsbeleg', action='store_true', help='Prompt to generate Bewirtungsbeleg for each food invoice')
     parser.add_argument('--use-llm-for-beleg', action='store_true', help='Enable LLM-based autofilling for Bewirtungsbeleg')
+    group = parser.add_mutually_exclusive_group(required=True)
+    group.add_argument('--process-local', action='store_true', help='Process and sort local PDFs into folders')
+    group.add_argument('--process-supabase', action='store_true', help='Extract and upload local PDFs to Supabase')
     args = parser.parse_args()
 
     # If --full-run is used, enable all three modes
@@ -525,7 +629,11 @@ def main():
                 print(f"[i] Categorizing file: {file_path}")
                 print(f"[i] Extracted text preview: {text[:100]}...")
                 category = categorize_invoice(text)
-                sort_file_to_category(file_path, category, text, args.rename_by_date, calendar_context=CALENDAR_CONTEXT)
+                if args.upload_to_supabase:
+                    extracted_data = extract_invoice_fields(text)  # You must implement this function
+                    upload_invoice_to_supabase(file_path, category, text, extracted_data)
+                else:
+                    sort_file_to_category(file_path, category, text, args.rename_by_date, calendar_context=CALENDAR_CONTEXT)
 
             links = extract_invoice_links_with_ollama(service, msg['id'])
             if links:
@@ -536,7 +644,11 @@ def main():
                         print(f"[i] Categorizing file: {file_path_from_link}")
                         print(f"[i] Extracted text preview: {text[:100]}...")
                         category = categorize_invoice(text)
-                        sort_file_to_category(file_path_from_link, category, text, args.rename_by_date, calendar_context=CALENDAR_CONTEXT)
+                        if args.upload_to_supabase:
+                            extracted_data = extract_invoice_fields(text)
+                            upload_invoice_to_supabase(file_path_from_link, category, text, extracted_data)
+                        else:
+                            sort_file_to_category(file_path_from_link, category, text, args.rename_by_date, calendar_context=CALENDAR_CONTEXT)
                         return True
                     return False
 
@@ -562,7 +674,68 @@ def main():
         return
 
     if args.process_local:
-        process_dropped_invoices(rename_by_date=args.rename_by_date, calendar_context=CALENDAR_CONTEXT)
+        # For local, scan all PDFs in temp_invoices/
+        for root, _, files in os.walk(DOWNLOAD_DIR):
+            for file in files:
+                if file.lower().endswith('.pdf'):
+                    file_path = os.path.join(root, file)
+                    if not os.path.exists(file_path):
+                        continue
+                    fname = os.path.basename(file_path)
+                    print(f"[i] Found existing file: {fname}")
+                    try:
+                        text = extract_text_from_pdf(file_path)
+                        print(f"[i] Categorizing manual file: {fname}")
+                        print(f"[i] Extracted text preview: {text[:100]}...")
+                        category = categorize_invoice(text)
+                        sort_file_to_category(file_path, category, text, args.rename_by_date, calendar_context=CALENDAR_CONTEXT)
+                    except Exception as e:
+                        print(f"[!] Error processing {fname}: {e}")
+        # Clean up after initial scan
+        clean_up_download_dir()
+        print(f"\n[i] Watching {DOWNLOAD_DIR} for new PDFs and folders using watchdog... (Press Ctrl+C to stop)")
+        event_handler = InvoiceHandler(rename_by_date=args.rename_by_date, calendar_context=CALENDAR_CONTEXT)
+        observer = Observer()
+        observer.schedule(event_handler, DOWNLOAD_DIR, recursive=True)
+        observer.start()
+        try:
+            while True:
+                time.sleep(1)
+        except KeyboardInterrupt:
+            observer.stop()
+            print("\n[i] Stopped watching for new PDFs.")
+        finally:
+            clean_up_download_dir()
+            observer.join()
+
+    if args.process_supabase:
+        for root, _, files in os.walk(DOWNLOAD_DIR):
+            for file in files:
+                if file.lower().endswith('.pdf'):
+                    file_path = os.path.join(root, file)
+                    if not os.path.exists(file_path):
+                        continue
+                    fname = os.path.basename(file_path)
+                    print(f"[i] Found existing file for Supabase: {fname}")
+                    try:
+                        text = extract_text_from_pdf(file_path)
+                        print(f"[i] Extracted text preview: {text[:100]}...")
+                        category = categorize_invoice(text)
+                        extracted_data = extract_invoice_fields(text)
+
+                        # Check if already uploaded
+                        supabase_url = os.getenv("SUPABASE_URL")
+                        supabase_key = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
+                        client = create_client(supabase_url, supabase_key)
+                        pdf_url = f"{supabase_url}/storage/v1/object/public/invoices/{fname}"
+                        existing = client.table("invoices").select("id").eq("pdfUrl", pdf_url).execute()
+                        if existing.data:
+                            print(f"[→] Skipping already uploaded file: {fname}")
+                            continue
+
+                        upload_invoice_to_supabase(file_path, category, text, extracted_data)
+                    except Exception as e:
+                        print(f"[!] Error processing {fname}: {e}")
 
     # ---- Bewirtungsbeleg generator ----
     if args.generate_bewirtungsbeleg:
