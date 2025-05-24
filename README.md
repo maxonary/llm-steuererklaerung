@@ -76,3 +76,47 @@ python main.py --rename-by-date --calendar-context calendar.ics
 ```
 
 This allows the script to include contextual slugs in filenames, like `2024-06-13-kickoff.pdf` or `2024-07-01-vacation.pdf`, based on events scheduled that day.
+
+## Mermaid Diagram
+
+```mermaid
+flowchart TD
+    A[Start] --> B[Load Config & Env Vars]
+    B --> C[Parse Arguments]
+    C --> D{Full Run?}
+    D -->|Yes| E[Enable Gmail Scan + Local Processing + Travel Report]
+    D -->|No| F[Check Individual Flags]
+
+    F --> G[Load Calendar Context]
+    E --> G
+
+    G --> H{Scan Gmail?}
+    H -->|Yes| I[Gmail Auth]
+    I --> J[Search for Emails]
+    J --> K[Filter & Process Emails]
+    K --> L[Download Attachments]
+    K --> M[Extract Invoice Links with Ollama]
+    L --> N[Extract Text from PDF]
+    M --> O[Download PDF from URL]
+
+    N --> P[Categorize Invoice with LLM]
+    O --> P
+    P --> Q[Store to Supabase]
+    Q --> R[Sort to Category Folder]
+
+    H -->|No| S{Process Local?}
+    S -->|Yes| T[Watch `temp_invoices/` with Watchdog]
+    T --> U[Extract Text, Categorize, Store, Sort]
+
+    S --> V{Generate Travel Report?}
+    V -->|Yes| W[Run Travel Report Generation]
+
+    V --> X{Generate Bewirtungsbeleg?}
+    X -->|Yes| Y[Loop Food PDFs]
+    Y --> Z[Run `generate_bewirtungsbeleg`]
+
+    Z --> End
+    R --> End
+    U --> End
+    W --> End
+```
