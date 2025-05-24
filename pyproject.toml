@@ -8,6 +8,7 @@ dependencies = [
     "browser-cookie3>=0.20.1",
     "bs4>=0.0.2",
     "dotenv>=0.9.9",
+    "fastapi>=0.115.12",
     "google-api-python-client>=2.167.0",
     "google-auth-httplib2>=0.2.0",
     "google-auth-oauthlib>=1.2.1",
@@ -19,6 +20,8 @@ dependencies = [
     "pandas>=2.2.3",
     "pymupdf>=1.25.5",
     "pypdf2>=3.0.1",
+    "python-multipart>=0.0.20",
     "reportlab>=4.4.1",
+    "uvicorn>=0.34.2",
     "watchdog>=6.0.0",
 ]
