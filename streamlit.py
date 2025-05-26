@@ -78,7 +78,7 @@ def main():
             return
 
         default_pdf = filtered_pdfs[0]
-        selected_pdf = st.radio("📄 Select an invoice", filtered_pdfs, index=0)
+        selected_pdf = st.selectbox("📁 Select an invoice", filtered_pdfs, index=0)
         pdf_path = os.path.join(food_dir, selected_pdf)
         # Show and update status
         current_status = get_pdf_status(pdf_path)
