@@ -2,6 +2,7 @@ import os
 from reportlab.lib.pagesizes import A4
 from reportlab.pdfgen import canvas
 from PyPDF2 import PdfReader, PdfWriter
+from PyPDF2.generic import NameObject, createStringObject
 from datetime import datetime
 from dotenv import load_dotenv
 load_dotenv()
@@ -322,8 +323,9 @@ def set_pdf_status(pdf_path, new_status):
         for page in reader.pages:
             writer.add_page(page)
         md = reader.metadata or {}
-        md["/BewirtungsbelegStatus"] = new_status
-        writer.add_metadata(md)
+        new_md = {NameObject(k): createStringObject(str(v)) for k, v in md.items()}
+        new_md[NameObject("/BewirtungsbelegStatus")] = createStringObject(new_status)
+        writer.add_metadata(new_md)
         temp_path = f"{pdf_path}.tmp.pdf"
         with open(temp_path, "wb") as f:
             writer.write(f)
