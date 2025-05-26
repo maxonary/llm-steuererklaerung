@@ -265,8 +265,8 @@ def attach_to_invoice(original_pdf, filled_beleg_pdf, output_path=None):
     """
     Prepend filled Bewirtungsbeleg to the invoice PDF and save result.
     Write to a temporary file first, only replacing the original if successful.
+    Also embed a Bewirtungsbeleg status field into the PDF metadata.
     """
-    # Default output_path: overwrite original invoice
     output_path = output_path or original_pdf
     tmp_path = f"{original_pdf}.tmp.pdf"
     merger = PdfWriter()
@@ -280,13 +280,14 @@ def attach_to_invoice(original_pdf, filled_beleg_pdf, output_path=None):
         inv_reader = PdfReader(inv_f)
         for page in inv_reader.pages:
             merger.add_page(page)
-    # Add marker to first page (metadata)
-    merger.add_metadata({"/BewirtungsbelegPrepended": "True"})
-    # Write to temporary file first
+    # Add marker and status to metadata
+    merger.add_metadata({
+        "/BewirtungsbelegPrepended": "True",
+        "/BewirtungsbelegStatus": "done"
+    })
     try:
         with open(tmp_path, "wb") as out_f:
             merger.write(out_f)
-        # If write succeeds, replace the original
         os.replace(tmp_path, output_path)
         print(f"Neue PDF gespeichert als {output_path}")
         return output_path
@@ -295,6 +296,42 @@ def attach_to_invoice(original_pdf, filled_beleg_pdf, output_path=None):
         if os.path.exists(tmp_path):
             os.remove(tmp_path)
         return None
+
+
+# --- PDF Status Helpers ---
+def get_pdf_status(pdf_path):
+    """
+    Get the current status metadata of a PDF.
+    Returns 'done', 'in progress', or 'missing'.
+    """
+    try:
+        with open(pdf_path, "rb") as f:
+            reader = PdfReader(f)
+            md = reader.metadata
+            return md.get("/BewirtungsbelegStatus", "in progress")
+    except Exception:
+        return "in progress"
+
+def set_pdf_status(pdf_path, new_status):
+    """
+    Update the status metadata of a PDF.
+    """
+    try:
+        reader = PdfReader(pdf_path)
+        writer = PdfWriter()
+        for page in reader.pages:
+            writer.add_page(page)
+        md = reader.metadata or {}
+        md["/BewirtungsbelegStatus"] = new_status
+        writer.add_metadata(md)
+        temp_path = f"{pdf_path}.tmp.pdf"
+        with open(temp_path, "wb") as f:
+            writer.write(f)
+        os.replace(temp_path, pdf_path)
+        return True
+    except Exception as e:
+        print(f"[!] Fehler beim Aktualisieren des Status: {e}")
+        return False
 
 def check_for_beleg_marker(pdf_path):
     """
