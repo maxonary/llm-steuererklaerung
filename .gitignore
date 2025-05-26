@@ -187,6 +187,7 @@ Reports/
 *cache.json
 signature.png
 *.pdf
+uploads/
 
 # MacOS Files
 .DS_Store
