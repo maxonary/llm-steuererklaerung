@@ -1,3 +1,4 @@
+import json
 import os
 from reportlab.lib.pagesizes import A4
 from reportlab.pdfgen import canvas
@@ -262,7 +263,7 @@ def insert_signature_area():
         else:
             print("Bitte 'y', 'n' oder 'custom' eingeben.")
 
-def attach_to_invoice(original_pdf, filled_beleg_pdf, output_path=None):
+def attach_to_invoice(original_pdf, filled_beleg_pdf, info_dict, output_path=None):
     """
     Prepend filled Bewirtungsbeleg to the invoice PDF and save result.
     Write to a temporary file first, only replacing the original if successful.
@@ -282,9 +283,11 @@ def attach_to_invoice(original_pdf, filled_beleg_pdf, output_path=None):
         for page in inv_reader.pages:
             merger.add_page(page)
     # Add marker and status to metadata
+    info_json = json.dumps(info_dict)
     merger.add_metadata({
         "/BewirtungsbelegPrepended": "True",
-        "/BewirtungsbelegStatus": "done"
+        "/BewirtungsbelegStatus": "done",
+        "/BewirtungsbelegData": info_json
     })
     try:
         with open(tmp_path, "wb") as out_f:
@@ -297,6 +300,24 @@ def attach_to_invoice(original_pdf, filled_beleg_pdf, output_path=None):
         if os.path.exists(tmp_path):
             os.remove(tmp_path)
         return None
+
+
+# --- PDF Form Data Helper ---
+def get_pdf_form_data(pdf_path):
+    """
+    Read and return the BewirtungsbelegData field from PDF metadata, if available.
+    Returns a dict or empty dict.
+    """
+    try:
+        with open(pdf_path, "rb") as f:
+            reader = PdfReader(f)
+            md = reader.metadata
+            raw_data = md.get("/BewirtungsbelegData")
+            if raw_data:
+                return json.loads(raw_data)
+    except Exception as e:
+        print(f"[!] Fehler beim Lesen von PDF-Formulardaten: {e}")
+    return {}
 
 
 # --- PDF Status Helpers ---
@@ -377,7 +398,7 @@ def main(invoice_path=None, use_llm=False):
     # Generate filled PDF
     beleg_pdf = generate_filled_pdf(info, signature_img_path=sig_path)
     # Prepend to invoice
-    attach_to_invoice(invoice_path, beleg_pdf)
+    attach_to_invoice(invoice_path, beleg_pdf, info)
 
 if __name__ == "__main__":
     main()

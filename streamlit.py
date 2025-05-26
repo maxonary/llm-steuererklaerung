@@ -3,7 +3,7 @@ import os
 import tempfile
 from pdf2image import convert_from_path
 from PIL import Image
-from bewirtungsbeleg import screen_pdf_for_info, generate_filled_pdf, attach_to_invoice, get_pdf_status, set_pdf_status
+from bewirtungsbeleg import screen_pdf_for_info, generate_filled_pdf, attach_to_invoice, get_pdf_status, set_pdf_status, get_pdf_form_data
 from PyPDF2 import PdfReader, PdfWriter
 
 st.set_page_config(page_title="🍽️ Bewirtungsbeleg Generator", layout="wide")
@@ -102,7 +102,10 @@ def main():
 
         use_llm = st.checkbox("Prefill form using LLM", value=True)
         pdf_status = get_pdf_status(pdf_path)
-        if use_llm and pdf_status != "done":
+        form_data = get_pdf_form_data(pdf_path)
+        if form_data:
+            extracted = form_data
+        elif use_llm and pdf_status != "done":
             extracted = screen_pdf_for_info(pdf_path)
         else:
             extracted = {}
@@ -143,7 +146,7 @@ def main():
 
             with st.spinner("Generating Bewirtungsbeleg..."):
                 filled_pdf = generate_filled_pdf(info, signature_img_path=sig_path)
-                final_pdf = attach_to_invoice(pdf_path, filled_pdf)
+                final_pdf = attach_to_invoice(pdf_path, filled_pdf, info)
 
                 if final_pdf:
                     set_pdf_status(pdf_path, "done")
