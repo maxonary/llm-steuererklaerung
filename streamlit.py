@@ -68,8 +68,17 @@ def main():
         if not pdfs:
             st.warning("No PDFs found in the Food folder.")
             return
-        next_pdf = next((f for f in pdfs if get_pdf_status(os.path.join(food_dir, f)) != "done"), pdfs[0])
-        selected_pdf = st.selectbox("Select a PDF", pdfs, index=pdfs.index(next_pdf))
+
+        statuses = {f: get_pdf_status(os.path.join(food_dir, f)) for f in pdfs}
+        show_only_unprocessed = st.checkbox("🔍 Only show unprocessed invoices", value=True)
+        filtered_pdfs = [f for f in pdfs if statuses[f] != "done"] if show_only_unprocessed else pdfs
+
+        if not filtered_pdfs:
+            st.success("🎉 All invoices are processed!")
+            return
+
+        default_pdf = filtered_pdfs[0]
+        selected_pdf = st.radio("📄 Select an invoice", filtered_pdfs, index=0)
         pdf_path = os.path.join(food_dir, selected_pdf)
         # Show and update status
         current_status = get_pdf_status(pdf_path)
@@ -102,26 +111,36 @@ def main():
 
         use_llm = st.checkbox("Prefill form using LLM", value=True)
         pdf_status = get_pdf_status(pdf_path)
+
+        # Extraction and form generation with spinners for feedback
+        # Extraction step
+        with st.spinner("🔎 Extrahiere Formulardaten..."):
+            form_data = get_pdf_form_data(pdf_path)
+        # New logic for extraction and LLM
         form_data = get_pdf_form_data(pdf_path)
         if form_data:
-            extracted = form_data
+            with st.spinner("📄 Lade bereits gespeicherte Formulardaten aus PDF..."):
+                extracted = form_data
         elif use_llm and pdf_status != "done":
-            extracted = screen_pdf_for_info(pdf_path)
+            with st.spinner("🤖 Extrahiere Formulardaten mit KI..."):
+                extracted = screen_pdf_for_info(pdf_path)
         else:
             extracted = {}
 
-        with st.form("bewirtungs_form"):
-            datum = st.text_input("Datum der Bewirtung", extracted.get("datum_bewirtung", ""))
-            ort = st.text_area("Ort der Bewirtung", extracted.get("ort_bewirtung", ""))
-            anlass = st.text_input("Anlass", extracted.get("anlass", ""))
-            personen = st.text_area("Bewirtete Personen (comma-separated)", ", ".join(extracted.get("personen", [])))
-            betrag = st.text_input("Rechnungsbetrag (EUR)", extracted.get("rechnungsbetrag", ""))
-            trinkgeld = st.text_input("Trinkgeld (EUR)", extracted.get("trinkgeld", ""))
-            unterschrift = st.text_input("Ort, Datum (Unterschrift)", extracted.get("ort_datum_unterschrift", ""))
+        # Form generation with spinner
+        with st.spinner("📝 Generiere Formular..."):
+            with st.form("bewirtungs_form"):
+                datum = st.text_input("Datum der Bewirtung", extracted.get("datum_bewirtung", ""))
+                ort = st.text_area("Ort der Bewirtung", extracted.get("ort_bewirtung", ""))
+                anlass = st.text_input("Anlass", extracted.get("anlass", ""))
+                personen = st.text_area("Bewirtete Personen (comma-separated)", ", ".join(extracted.get("personen", [])))
+                betrag = st.text_input("Rechnungsbetrag (EUR)", extracted.get("rechnungsbetrag", ""))
+                trinkgeld = st.text_input("Trinkgeld (EUR)", extracted.get("trinkgeld", ""))
+                unterschrift = st.text_input("Ort, Datum (Unterschrift)", extracted.get("ort_datum_unterschrift", ""))
 
-            signature_img = st.file_uploader("Optional: Signature Image (PNG/JPG)", type=["png", "jpg", "jpeg"])
+                signature_img = st.file_uploader("Optional: Signature Image (PNG/JPG)", type=["png", "jpg", "jpeg"])
 
-            submitted = st.form_submit_button("Generate Bewirtungsbeleg")
+                submitted = st.form_submit_button("Generate Bewirtungsbeleg")
 
         if submitted:
             # Normalize amounts
