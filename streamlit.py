@@ -1,0 +1,144 @@
+import streamlit as st
+import os
+import tempfile
+from pdf2image import convert_from_path
+from PIL import Image
+from bewirtungsbeleg import screen_pdf_for_info, generate_filled_pdf, attach_to_invoice
+from PyPDF2 import PdfReader, PdfWriter
+
+st.set_page_config(page_title="🍽️ Bewirtungsbeleg Generator", layout="wide")
+
+def show_pdf(file_path):
+    if not os.path.exists(file_path):
+        st.error("PDF file not found.")
+        return
+    try:
+        images = convert_from_path(file_path, dpi=150)
+        for img in images:
+            st.image(img, use_container_width=True)
+    except Exception as e:
+        st.error(f"Failed to render PDF: {e}")
+
+def check_for_beleg_marker(pdf_path):
+    try:
+        with open(pdf_path, "rb") as f:
+            reader = PdfReader(f)
+            md = reader.metadata
+            return md and md.get("/BewirtungsbelegPrepended") == "True"
+    except Exception:
+        return False
+
+def remove_beleg_from_invoice(pdf_path):
+    reader = PdfReader(pdf_path)
+    writer = PdfWriter()
+    if len(reader.pages) > 1:
+        for page in reader.pages[1:]:
+            writer.add_page(page)
+        temp_path = f"{pdf_path}.temp.pdf"
+        with open(temp_path, "wb") as f:
+            writer.write(f)
+        os.replace(temp_path, pdf_path)
+        return True
+    return False
+
+def normalize_amount(value_str):
+    """Normalize decimal separator (comma or dot) to dot, and strip whitespace."""
+    return value_str.replace(",", ".").strip()
+
+def main():
+    st.title("🍽️ Bewirtungsbeleg Generator")
+
+    # Choose input method
+    mode = st.radio("Select invoice source", ["Upload PDF", "Choose from 'Invoices/Food/' folder"])
+
+    pdf_path = None
+    if mode == "Upload PDF":
+        uploaded_file = st.file_uploader("Upload a PDF invoice", type="pdf")
+        if uploaded_file:
+            temp_dir = tempfile.mkdtemp()
+            pdf_path = os.path.join(temp_dir, uploaded_file.name)
+            with open(pdf_path, "wb") as f:
+                f.write(uploaded_file.read())
+    else:
+        food_dir = os.path.join("Invoices", "Food")
+        if not os.path.exists(food_dir):
+            st.error(f"No such directory: {food_dir}")
+            return
+        pdf_files = [f for f in os.listdir(food_dir) if f.lower().endswith(".pdf")]
+        if not pdf_files:
+            st.warning("No PDFs found in the Food folder.")
+            return
+        selected_pdf = st.selectbox("Select a PDF", pdf_files)
+        pdf_path = os.path.join(food_dir, selected_pdf)
+
+    if not pdf_path or not os.path.exists(pdf_path):
+        st.info("Please upload or select a PDF to begin.")
+        return
+
+    # --- Check for existing Bewirtungsbeleg and allow removal ---
+    if check_for_beleg_marker(pdf_path):
+        st.warning("⚠️ This PDF already includes a Bewirtungsbeleg.")
+        if st.button("🗑️ Remove existing Bewirtungsbeleg"):
+            if remove_beleg_from_invoice(pdf_path):
+                st.success("Bewirtungsbeleg removed.")
+            else:
+                st.error("Failed to remove Bewirtungsbeleg. It may be the only page.")
+            st.stop()
+
+    col1, col2 = st.columns([1, 1.5])
+
+    with col1:
+        st.subheader("📄 Invoice Preview")
+        show_pdf(pdf_path)
+
+    with col2:
+        st.subheader("🧾 Bewirtungsbeleg Details")
+
+        use_llm = st.checkbox("Prefill form using LLM", value=True)
+        extracted = screen_pdf_for_info(pdf_path) if use_llm else {}
+
+        with st.form("bewirtungs_form"):
+            datum = st.text_input("Datum der Bewirtung", extracted.get("datum_bewirtung", ""))
+            ort = st.text_area("Ort der Bewirtung", extracted.get("ort_bewirtung", ""))
+            anlass = st.text_input("Anlass", extracted.get("anlass", ""))
+            personen = st.text_area("Bewirtete Personen (comma-separated)", ", ".join(extracted.get("personen", [])))
+            betrag = st.text_input("Rechnungsbetrag (EUR)", extracted.get("rechnungsbetrag", ""))
+            trinkgeld = st.text_input("Trinkgeld (EUR)", extracted.get("trinkgeld", ""))
+            unterschrift = st.text_input("Ort, Datum (Unterschrift)", extracted.get("ort_datum_unterschrift", ""))
+
+            signature_img = st.file_uploader("Optional: Signature Image (PNG/JPG)", type=["png", "jpg", "jpeg"])
+
+            submitted = st.form_submit_button("Generate Bewirtungsbeleg")
+
+        if submitted:
+            # Normalize amounts
+            betrag_norm = normalize_amount(betrag)
+            trinkgeld_norm = normalize_amount(trinkgeld)
+            info = {
+                "datum_bewirtung": datum,
+                "ort_bewirtung": ort,
+                "anlass": anlass,
+                "personen": [p.strip() for p in personen.split(",") if p.strip()],
+                "rechnungsbetrag": betrag_norm,
+                "trinkgeld": trinkgeld_norm,
+                "ort_datum_unterschrift": unterschrift
+            }
+
+            sig_path = None
+            if signature_img:
+                sig_temp = tempfile.NamedTemporaryFile(delete=False, suffix=".png")
+                sig_temp.write(signature_img.read())
+                sig_temp.close()
+                sig_path = sig_temp.name
+
+            with st.spinner("Generating Bewirtungsbeleg..."):
+                filled_pdf = generate_filled_pdf(info, signature_img_path=sig_path)
+                final_pdf = attach_to_invoice(pdf_path, filled_pdf)
+
+                if final_pdf:
+                    with open(final_pdf, "rb") as f:
+                        st.success("✅ Bewirtungsbeleg created successfully!")
+                        st.download_button("📥 Download PDF", f, file_name=os.path.basename(final_pdf), mime="application/pdf")
+
+if __name__ == "__main__":
+    main()
