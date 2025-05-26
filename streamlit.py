@@ -3,7 +3,7 @@ import os
 import tempfile
 from pdf2image import convert_from_path
 from PIL import Image
-from bewirtungsbeleg import screen_pdf_for_info, generate_filled_pdf, attach_to_invoice
+from bewirtungsbeleg import screen_pdf_for_info, generate_filled_pdf, attach_to_invoice, get_pdf_status, set_pdf_status
 from PyPDF2 import PdfReader, PdfWriter
 
 st.set_page_config(page_title="🍽️ Bewirtungsbeleg Generator", layout="wide")
@@ -64,12 +64,18 @@ def main():
         if not os.path.exists(food_dir):
             st.error(f"No such directory: {food_dir}")
             return
-        pdf_files = [f for f in os.listdir(food_dir) if f.lower().endswith(".pdf")]
-        if not pdf_files:
+        pdfs = [f for f in os.listdir(food_dir) if f.lower().endswith(".pdf")]
+        if not pdfs:
             st.warning("No PDFs found in the Food folder.")
             return
-        selected_pdf = st.selectbox("Select a PDF", pdf_files)
+        next_pdf = next((f for f in pdfs if get_pdf_status(os.path.join(food_dir, f)) != "done"), pdfs[0])
+        selected_pdf = st.selectbox("Select a PDF", pdfs, index=pdfs.index(next_pdf))
         pdf_path = os.path.join(food_dir, selected_pdf)
+        # Show and update status
+        current_status = get_pdf_status(pdf_path)
+        new_status = st.selectbox("Status", ["in progress", "done", "missing"], index=["in progress", "done", "missing"].index(current_status))
+        if new_status != current_status:
+            set_pdf_status(pdf_path, new_status)
 
     if not pdf_path or not os.path.exists(pdf_path):
         st.info("Please upload or select a PDF to begin.")
@@ -95,7 +101,11 @@ def main():
         st.subheader("🧾 Bewirtungsbeleg Details")
 
         use_llm = st.checkbox("Prefill form using LLM", value=True)
-        extracted = screen_pdf_for_info(pdf_path) if use_llm else {}
+        pdf_status = get_pdf_status(pdf_path)
+        if use_llm and pdf_status != "done":
+            extracted = screen_pdf_for_info(pdf_path)
+        else:
+            extracted = {}
 
         with st.form("bewirtungs_form"):
             datum = st.text_input("Datum der Bewirtung", extracted.get("datum_bewirtung", ""))
@@ -136,9 +146,12 @@ def main():
                 final_pdf = attach_to_invoice(pdf_path, filled_pdf)
 
                 if final_pdf:
+                    set_pdf_status(pdf_path, "done")
                     with open(final_pdf, "rb") as f:
                         st.success("✅ Bewirtungsbeleg created successfully!")
                         st.download_button("📥 Download PDF", f, file_name=os.path.basename(final_pdf), mime="application/pdf")
+                    st.success("✅ Marked as done. Loading next file...")
+                    st.rerun()
 
 if __name__ == "__main__":
     main()
