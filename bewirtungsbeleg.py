@@ -185,7 +185,6 @@ PDF-Text:
     if not info.get('ort_datum_unterschrift') and city:
         info['ort_datum_unterschrift'] = city
 
-    trace.end()
     return info
 
 def generate_filled_pdf(info_dict, output_pdf_path="bewirtungsbeleg_ausgefuellt.pdf", signature_img_path=None):
