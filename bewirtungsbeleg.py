@@ -6,10 +6,17 @@ from PyPDF2 import PdfReader, PdfWriter
 from PyPDF2.generic import NameObject, createStringObject
 from datetime import datetime
 from dotenv import load_dotenv
+from langfuse import Langfuse
 load_dotenv()
 
 DEFAULT_SIGNATURE_PATH = os.getenv("DEFAULT_SIGNATURE_PATH", "signature.png")
 DEFAULT_SIGNATURE_NAME = os.getenv("DEFAULT_SIGNATURE_NAME", "")
+
+langfuse = Langfuse(
+    public_key=os.getenv("LANGFUSE_PUBLIC_KEY"),
+    secret_key=os.getenv("LANGFUSE_SECRET_KEY"),
+    host=os.getenv("LANGFUSE_HOST", "https://cloud.langfuse.com")
+)
 
 def prompt_user_info(initial_info=None):
     """
@@ -96,9 +103,15 @@ PDF-Text:
 {text}
 \"\"\"
 """
-    # Try OpenAI or Ollama depending on config
+    trace = langfuse.trace(name="screen_pdf_for_info", user_id="user_id_or_email")
     try:
-        import os
+        # Before LLM call
+        prompt_span = trace.span(
+            name="llm_prompt",
+            input=prompt,
+            metadata={"pdf_path": pdf_path}
+        )
+        # Try OpenAI or Ollama depending on config
         if os.getenv("USE_OPENAI", "False").lower() in ["1", "true", "yes"]:
             import openai
             model = os.getenv("OPENAI_MODEL", "gpt-3.5-turbo")
@@ -114,7 +127,9 @@ PDF-Text:
             model = os.getenv("MODEL", "mistral")
             response = ollama.chat(model=model, messages=[{"role": "user", "content": prompt}])
             content = response['message']['content']
+        prompt_span.end(output=content)
     except Exception as e:
+        prompt_span.end(output=str(e), level="ERROR")
         print(f"[!] LLM-Extraktion fehlgeschlagen: {e}")
         content = ""
 
@@ -170,6 +185,7 @@ PDF-Text:
     if not info.get('ort_datum_unterschrift') and city:
         info['ort_datum_unterschrift'] = city
 
+    trace.end()
     return info
 
 def generate_filled_pdf(info_dict, output_pdf_path="bewirtungsbeleg_ausgefuellt.pdf", signature_img_path=None):
