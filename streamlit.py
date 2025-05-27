@@ -171,10 +171,32 @@ def main():
             pdf_status = get_pdf_status(pdf_path)
             form_data = get_pdf_form_data(pdf_path)
 
-            # Button to trigger LLM extraction
-            if st.button("🤖 Prefill with LLM"):
-                with st.spinner("🤖 Extrahiere Formulardaten mit KI..."):
-                    st.session_state["llm_extracted"] = screen_pdf_for_info(pdf_path)
+            # --- Navigation and LLM Prefill Buttons ---
+            nav_col1, nav_col2, nav_col3 = st.columns([1,1,2])
+            # Find index of current PDF in filtered_pdfs
+            current_idx = filtered_pdfs.index(selected_pdf)
+            with nav_col1:
+                if st.button("⬅️ Previous", disabled=(current_idx == 0)):
+                    if current_idx > 0:
+                        st.session_state["llm_extracted"] = None
+                        st.session_state["filled"] = False
+                        st.session_state["filled_pdf_path"] = None
+                        st.session_state["form_data"] = None
+                        st.session_state["selected_pdf"] = filtered_pdfs[current_idx - 1]
+                        st.rerun()
+            with nav_col2:
+                if st.button("➡️ Next", disabled=(current_idx == len(filtered_pdfs) - 1)):
+                    if current_idx < len(filtered_pdfs) - 1:
+                        st.session_state["llm_extracted"] = None
+                        st.session_state["filled"] = False
+                        st.session_state["filled_pdf_path"] = None
+                        st.session_state["form_data"] = None
+                        st.session_state["selected_pdf"] = filtered_pdfs[current_idx + 1]
+                        st.rerun()
+            with nav_col3:
+                if st.button("🤖 Prefill with LLM"):
+                    with st.spinner("🤖 Extrahiere Formulardaten mit KI..."):
+                        st.session_state["llm_extracted"] = screen_pdf_for_info(pdf_path)
 
             # Choose which data to use for the form
             if form_data:
