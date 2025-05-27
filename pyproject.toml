@@ -14,6 +14,7 @@ dependencies = [
     "google-auth-oauthlib>=1.2.1",
     "ics>=0.7.2",
     "ipykernel>=6.29.5",
+    "langfuse>=2.60.7",
     "ollama>=0.4.8",
     "openai>=1.75.0",
     "openpyxl>=3.1.5",
