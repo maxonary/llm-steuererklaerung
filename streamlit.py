@@ -70,8 +70,28 @@ def main():
             return
 
         statuses = {f: get_pdf_status(os.path.join(food_dir, f)) for f in pdfs}
-        show_only_unprocessed = st.checkbox("🔍 Only show unprocessed invoices", value=True)
-        filtered_pdfs = [f for f in pdfs if statuses[f] != "done"] if show_only_unprocessed else pdfs
+        sort_order = st.selectbox("Sort order", ["A–Z", "Z–A"], index=0)
+
+        # --- State for filter controls ---
+        if "status_filter" not in st.session_state:
+            st.session_state["status_filter"] = ["in progress", "missing"]
+
+        status_options = ["in progress", "done", "missing"]
+
+        def on_status_filter_change():
+            pass  # No-op, but can be used for future logic
+
+        # --- Controls ---
+        st.multiselect(
+            "Filter by status",
+            options=status_options,
+            default=st.session_state["status_filter"],
+            key="status_filter",
+            on_change=on_status_filter_change
+        )
+
+        filtered_pdfs = [f for f in pdfs if statuses[f] in st.session_state["status_filter"]]
+        filtered_pdfs = sorted(filtered_pdfs, reverse=(sort_order == "Z–A"))
 
         if not filtered_pdfs:
             st.success("🎉 All invoices are processed!")
