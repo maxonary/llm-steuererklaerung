@@ -9,6 +9,7 @@ Automatically fetch, categorize, rename and sort invoices from Gmail or local fo
 Generate Excel travel reports summarizing travel-related expenses (trips and meals) for a given year. The output supports both English and German column headers.
 
 ## Complimentary Streamlit App: Interactive Bewirtungsbeleg Generator
+![Streamlit Webapp](https://github.com/user-attachments/assets/51e8a005-7ef4-42f3-99b0-ee162c324c02)
 
 The project also includes a Streamlit interface for interactively generating and attaching Bewirtungsbelege (German hospitality receipts) to your restaurant or meal invoices.
 
