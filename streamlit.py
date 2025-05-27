@@ -151,6 +151,9 @@ def main():
                 if st.button("✏️ Edit again"):
                     remove_beleg_from_invoice(pdf_path)
                     set_pdf_status(pdf_path, "in progress")
+                    current_status = "in progress"
+                    if current_status not in st.session_state["status_filter"]:
+                        st.session_state["status_filter"].append(current_status)
                     st.session_state["filled"] = False
                     st.rerun()
             with colB:
