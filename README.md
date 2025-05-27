@@ -1,4 +1,4 @@
-# Why this script? - Gmail Invoice Sorting
+# Why this CLI script? - Gmail Invoice Sorting
 
 <img width="684" alt="Sorted Folders White" src="https://github.com/user-attachments/assets/60347cec-0d7a-4380-afdd-0a9849ddb0b3" />
 
@@ -7,6 +7,24 @@ I didn't want to download and sort all my emails manually for the yearly invoici
 Automatically fetch, categorize, rename and sort invoices from Gmail or local folders using a local LLM (via Ollama) or ChatGPT (via OpenAI API).
 
 Generate Excel travel reports summarizing travel-related expenses (trips and meals) for a given year. The output supports both English and German column headers.
+
+## Complimentary Streamlit App: Interactive Bewirtungsbeleg Generator
+
+The project also includes a Streamlit interface for interactively generating and attaching Bewirtungsbelege (German hospitality receipts) to your restaurant or meal invoices.
+
+**Features:**
+- Upload a PDF invoice or select one from your sorted `Invoices/Food/` folder
+- Preview the original invoice and the generated Bewirtungsbeleg side by side
+- Use LLM-based extraction to prefill form fields, or enter/edit them manually
+- Optionally upload a signature image to be included on the Bewirtungsbeleg
+- Download the combined PDF (Bewirtungsbeleg + invoice) or mark as done
+- Filter and sort your invoices by processing status and filename
+- Edit or regenerate Bewirtungsbelege for any invoice at any time
+
+**Use case:**
+This app is designed for freelancers, business owners, or anyone in Germany who needs to attach a Bewirtungsbeleg to meal-related invoices for tax or accounting purposes. It streamlines the process, ensures all required fields are filled, and keeps your workflow organized and auditable.
+
+---
 
 ## Installing 
 Install dependencies into a venv with UV. Make sure to have UV installed.
@@ -17,7 +35,7 @@ Then enable the venv.
 
 Make sure to download your Gmail OAuth 2.0 Credentials Json from your Google Cloud Console after enabling the Gmail API. This has to be placed in the `credentials.json` file.
 
-## Running
+## Running functions using the CLI
 
 ```bash
 python main.py --scan-gmail
