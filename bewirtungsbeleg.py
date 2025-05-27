@@ -67,17 +67,27 @@ def screen_pdf_for_info(pdf_path):
             text = "\n".join(page.get_text() for page in doc)
             return text[:2000]
     text = extract_text_from_pdf(pdf_path)
-    # Prepare prompt
+    # Prepare improved prompt for extraction, especially for delivery-style invoices
     prompt = f"""
-Du bist ein Assistent für Bewirtungsbelege. Extrahiere die folgenden Felder aus dem folgenden Bewirtungsbeleg oder Restaurantbeleg (so gut wie möglich, auch wenn nicht alle Informationen vorhanden sind):
+Du bist ein Assistent für Bewirtungsbelege. Extrahiere die folgenden Felder aus Restaurantrechnungen oder Lieferbelegen (wie z. B. von Uber Eats):
 
-- datum_bewirtung: Datum der Bewirtung (z.B. 12.03.2024)
-- ort_bewirtung: Name und Anschrift des Restaurants
+Hinweise zur Extraktion:
+- Verwende den Wert neben "Gesamt" oder "Insgesamt" als `rechnungsbetrag` (nicht Zwischensumme).
+- Verwende das Datum oben rechts auf der Seite als `datum_bewirtung`.
+- Wenn es einen Bereich "Geliefert an" gibt, verwende ihn für `ort_bewirtung`.
+- Ignoriere Angaben wie Zwischensumme, Rabatte, Liefergebühr oder temporäre Autorisierungen.
+- Wenn keine Personennamen genannt sind, lasse `personen` leer.
+- Gib Trinkgeld nur an, wenn es explizit aufgeführt ist.
+
+Extrahiere die folgenden Felder (alle Felder als Zeichenkette, `personen` als Liste):
+
+- datum_bewirtung: Datum der Bewirtung (z.B. 06.10.2023)
+- ort_bewirtung: Name und Adresse des Restaurants (oder Lieferadresse bei Delivery)
 - anlass: Anlass der Bewirtung (z.B. Geschäftsessen mit Kunde XY)
-- personen: Liste der bewirteten Personen (nur Namen, max 10)
-- rechnungsbetrag: Gesamtbetrag der Rechnung in EUR (ohne €-Zeichen)
-- trinkgeld: Trinkgeld in EUR (nur Zahl, falls erkennbar, sonst leer)
-- ort_datum_unterschrift: Ort und Datum für Unterschrift (z.B. Ort, Datum)
+- personen: Liste der bewirteten Personen (nur Namen, max. 10)
+- rechnungsbetrag: Betrag in EUR (z.B. 25.60)
+- trinkgeld: Trinkgeldbetrag in EUR (z.B. 3.00) — falls explizit vorhanden
+- ort_datum_unterschrift: Ort und Datum für Unterschrift (z.B. Berlin, 06.10.2023)
 
 Gib das Ergebnis als JSON-Objekt mit diesen Feldern zurück.
 
