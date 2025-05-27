@@ -43,6 +43,8 @@ def remove_beleg_from_invoice(pdf_path):
 
 def normalize_amount(value_str):
     """Normalize decimal separator (comma or dot) to dot, and strip whitespace."""
+    if not value_str:
+        return "0"
     return value_str.replace(",", ".").strip()
 
 def main():
