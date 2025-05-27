@@ -102,33 +102,57 @@ def main():
 
     col1, col2 = st.columns([1, 1.5])
 
+    # --- State management ---
+    if "filled" not in st.session_state:
+        st.session_state["filled"] = False
+    if "filled_pdf_path" not in st.session_state:
+        st.session_state["filled_pdf_path"] = None
+    if "form_data" not in st.session_state:
+        st.session_state["form_data"] = None
+
     with col1:
-        st.subheader("📄 Invoice Preview")
-        show_pdf(pdf_path)
+        if st.session_state["filled"]:
+            st.subheader("📄 Preview of the new PDF")
+            show_pdf(st.session_state["filled_pdf_path"])
+        else:
+            st.subheader("📄 Invoice Preview")
+            show_pdf(pdf_path)
 
     with col2:
         st.subheader("🧾 Bewirtungsbeleg Details")
 
-        use_llm = st.checkbox("Prefill form using LLM", value=True)
-        pdf_status = get_pdf_status(pdf_path)
-
-        # Extraction and form generation with spinners for feedback
-        # Extraction step
-        with st.spinner("🔎 Extrahiere Formulardaten..."):
-            form_data = get_pdf_form_data(pdf_path)
-        # New logic for extraction and LLM
-        form_data = get_pdf_form_data(pdf_path)
-        if form_data:
-            with st.spinner("📄 Lade bereits gespeicherte Formulardaten aus PDF..."):
-                extracted = form_data
-        elif use_llm and pdf_status != "done":
-            with st.spinner("🤖 Extrahiere Formulardaten mit KI..."):
-                extracted = screen_pdf_for_info(pdf_path)
+        if st.session_state["filled"]:
+            st.success("✅ Bewirtungsbeleg created successfully!")
+            # Action buttons
+            colA, colB, colC = st.columns([1,1,1])
+            with colA:
+                if st.button("✏️ Edit again"):
+                    remove_beleg_from_invoice(pdf_path)
+                    set_pdf_status(pdf_path, "in progress")
+                    st.session_state["filled"] = False
+                    st.rerun()
+            with colB:
+                if st.button("➡️ Next document"):
+                    st.session_state["filled"] = False
+                    st.rerun()
+            with colC:
+                with open(st.session_state["filled_pdf_path"], "rb") as f:
+                    st.download_button("📥 Download PDF", f, file_name=os.path.basename(st.session_state["filled_pdf_path"]), mime="application/pdf")
         else:
-            extracted = {}
+            use_llm = st.checkbox("Prefill form using LLM", value=True)
+            pdf_status = get_pdf_status(pdf_path)
 
-        # Form generation with spinner
-        with st.spinner("📝 Generiere Formular..."):
+            with st.spinner("🔎 Extrahiere Formulardaten..."):
+                form_data = get_pdf_form_data(pdf_path)
+            if form_data:
+                with st.spinner("📄 Lade bereits gespeicherte Formulardaten aus PDF..."):
+                    extracted = form_data
+            elif use_llm and pdf_status != "done":
+                with st.spinner("🤖 Extrahiere Formulardaten mit KI..."):
+                    extracted = screen_pdf_for_info(pdf_path)
+            else:
+                extracted = {}
+
             with st.form("bewirtungs_form"):
                 datum = st.text_input("Datum der Bewirtung", extracted.get("datum_bewirtung", ""))
                 ort = st.text_area("Ort der Bewirtung", extracted.get("ort_bewirtung", ""))
@@ -142,38 +166,37 @@ def main():
 
                 submitted = st.form_submit_button("Generate Bewirtungsbeleg")
 
-        if submitted:
-            # Normalize amounts
-            betrag_norm = normalize_amount(betrag)
-            trinkgeld_norm = normalize_amount(trinkgeld)
-            info = {
-                "datum_bewirtung": datum,
-                "ort_bewirtung": ort,
-                "anlass": anlass,
-                "personen": [p.strip() for p in personen.split(",") if p.strip()],
-                "rechnungsbetrag": betrag_norm,
-                "trinkgeld": trinkgeld_norm,
-                "ort_datum_unterschrift": unterschrift
-            }
+            if submitted:
+                # Normalize amounts
+                betrag_norm = normalize_amount(betrag)
+                trinkgeld_norm = normalize_amount(trinkgeld)
+                info = {
+                    "datum_bewirtung": datum,
+                    "ort_bewirtung": ort,
+                    "anlass": anlass,
+                    "personen": [p.strip() for p in personen.split(",") if p.strip()],
+                    "rechnungsbetrag": betrag_norm,
+                    "trinkgeld": trinkgeld_norm,
+                    "ort_datum_unterschrift": unterschrift
+                }
 
-            sig_path = None
-            if signature_img:
-                sig_temp = tempfile.NamedTemporaryFile(delete=False, suffix=".png")
-                sig_temp.write(signature_img.read())
-                sig_temp.close()
-                sig_path = sig_temp.name
+                sig_path = None
+                if signature_img:
+                    sig_temp = tempfile.NamedTemporaryFile(delete=False, suffix=".png")
+                    sig_temp.write(signature_img.read())
+                    sig_temp.close()
+                    sig_path = sig_temp.name
 
-            with st.spinner("Generating Bewirtungsbeleg..."):
-                filled_pdf = generate_filled_pdf(info, signature_img_path=sig_path)
-                final_pdf = attach_to_invoice(pdf_path, filled_pdf, info)
+                with st.spinner("Generating Bewirtungsbeleg..."):
+                    filled_pdf = generate_filled_pdf(info, signature_img_path=sig_path)
+                    final_pdf = attach_to_invoice(pdf_path, filled_pdf, info)
 
-                if final_pdf:
-                    set_pdf_status(pdf_path, "done")
-                    with open(final_pdf, "rb") as f:
-                        st.success("✅ Bewirtungsbeleg created successfully!")
-                        st.download_button("📥 Download PDF", f, file_name=os.path.basename(final_pdf), mime="application/pdf")
-                    st.success("✅ Marked as done. Loading next file...")
-                    st.rerun()
+                    if final_pdf:
+                        set_pdf_status(pdf_path, "done")
+                        st.session_state["filled"] = True
+                        st.session_state["filled_pdf_path"] = final_pdf
+                        st.session_state["form_data"] = info
+                        st.rerun()
 
 if __name__ == "__main__":
     main()
