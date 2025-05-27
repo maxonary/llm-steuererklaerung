@@ -132,6 +132,10 @@ def main():
     if "form_data" not in st.session_state:
         st.session_state["form_data"] = None
 
+    # --- LLM Extraction State ---
+    if "llm_extracted" not in st.session_state:
+        st.session_state["llm_extracted"] = None
+
     with col1:
         if st.session_state["filled"]:
             st.subheader("📄 Preview of the new PDF")
@@ -164,17 +168,19 @@ def main():
                 with open(st.session_state["filled_pdf_path"], "rb") as f:
                     st.download_button("📥 Download PDF", f, file_name=os.path.basename(st.session_state["filled_pdf_path"]), mime="application/pdf")
         else:
-            use_llm = st.checkbox("Prefill form using LLM", value=True)
             pdf_status = get_pdf_status(pdf_path)
+            form_data = get_pdf_form_data(pdf_path)
 
-            with st.spinner("🔎 Extrahiere Formulardaten..."):
-                form_data = get_pdf_form_data(pdf_path)
-            if form_data:
-                with st.spinner("📄 Lade bereits gespeicherte Formulardaten aus PDF..."):
-                    extracted = form_data
-            elif use_llm and pdf_status != "done":
+            # Button to trigger LLM extraction
+            if st.button("🤖 Prefill with LLM"):
                 with st.spinner("🤖 Extrahiere Formulardaten mit KI..."):
-                    extracted = screen_pdf_for_info(pdf_path)
+                    st.session_state["llm_extracted"] = screen_pdf_for_info(pdf_path)
+
+            # Choose which data to use for the form
+            if form_data:
+                extracted = form_data
+            elif st.session_state["llm_extracted"]:
+                extracted = st.session_state["llm_extracted"]
             else:
                 extracted = {}
 
