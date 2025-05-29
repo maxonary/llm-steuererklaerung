@@ -24,6 +24,7 @@ dependencies = [
     "pypdf2>=3.0.1",
     "python-multipart>=0.0.20",
     "reportlab>=4.4.1",
+    "selenium>=4.33.0",
     "streamlit>=1.45.1",
     "supabase>=2.15.1",
     "uvicorn>=0.34.2",
