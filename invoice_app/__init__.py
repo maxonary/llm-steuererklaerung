@@ -1,0 +1,2 @@
+"""Shared invoice application modules."""
+

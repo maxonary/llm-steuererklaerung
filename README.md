@@ -39,32 +39,54 @@ Make sure to download your Gmail OAuth 2.0 Credentials Json from your Google Clo
 ## Running functions using the CLI
 
 ```bash
-python main.py --scan-gmail
+python3 main.py sync-gmail --window-months 18 --apply-labels
 ```
-Scans Gmail and processes invoices found in emails.
+Scans Gmail, ingests invoice PDFs, updates the local SQLite index, and applies Gmail labels (`Invoices/Processed`, `Invoices/NeedsReview`, `Invoices/Duplicate`).
 
 ```bash
-python main.py --process-local
+python3 main.py sync-gmail --since 2025/01/01 --apply-labels
+```
+Scans Gmail starting at a fixed date.
+
+```bash
+python3 main.py find --vendor bahn --year 2026
+```
+Searches indexed invoices quickly without manual folder/email scanning.
+
+```bash
+python3 main.py find --status needs_review --open-gmail-link
+```
+Lists review-needed invoices and prints Gmail deep links for quick open.
+
+```bash
+python3 main.py export-accountant --year 2026 --month 1
+```
+Creates a monthly accountant handoff package with:
+- `Exports/2026/2026-01/2026-01-invoices.zip`
+- `Exports/2026/2026-01/2026-01-manifest.csv`
+
+```bash
+python3 main.py process-local
 ```
 Processes and sorts local PDFs dropped into `temp_invoices/`.
 
 ```bash
-python main.py --generate-travel-report 2024 --lang en
+python3 main.py --generate-travel-report 2024 --lang en
 ```
 Generates a travel expense report for the given year with **English** column headers.
 
 ```bash
-python main.py --generate-travel-report 2024 --lang de
+python3 main.py --generate-travel-report 2024 --lang de
 ```
 Generates the same report with **German** column headers.
 
 ```bash
-python main.py --generate-travel-report 2024 --lang en --use-cache --parallel
+python3 main.py --generate-travel-report 2024 --lang en --use-cache --parallel
 ```
 Enables caching of LLM results and multi-threaded processing to speed up report generation.
 
 ```bash
-python main.py --generate-bewirtungsbeleg --use-llm-for-beleg
+python3 main.py --generate-bewirtungsbeleg --use-llm-for-beleg
 ```
 Prompts you to generate a Bewirtungsbeleg for each invoice in the `Invoices/Food/` folder, with fields automatically suggested by an LLM (ChatGPT or Ollama) and confirmed by you in the terminal.
 
@@ -73,25 +95,17 @@ Prompts you to generate a Bewirtungsbeleg for each invoice in the `Invoices/Food
 - `--use-cache`: Saves LLM responses to disk and reuses them to avoid duplicate API or model calls.
 - `--parallel`: Uses multi-threading to process invoices faster (especially helpful for many PDFs).
 - `--generate-bewirtungsbeleg`: Interactively create Bewirtungsbelege for restaurant/meal invoices.
- - `--use-llm-for-beleg`: Use an LLM to autofill suggested values for Bewirtungsbeleg fields.
+- `--use-llm-for-beleg`: Use an LLM to autofill suggested values for Bewirtungsbeleg fields.
+
+### New commands
+
+- `sync-gmail`: Gmail-first ingestion with rolling time window or explicit since date.
+- `find`: Query the local index by vendor/category/status/year/month/text.
+- `export-accountant`: Build monthly ZIP + CSV accountant handoff packages.
+- `reindex`: Rebuild the local index from `Invoices/` category folders.
+- `--no-apply-labels` (with `sync-gmail`): Keep Gmail untouched while still indexing locally.
 
 ```bash
-python main.py --full-run --calendar-context calendar.ics
+python3 main.py --full-run
 ```
-Runs a full workflow: Gmail scan, local invoice processing, and travel report generation with optional calendar context.
-
-```bash
-python main.py --rename-by-date --calendar-context calendar.ics
-```
-Renames files using the first detected date and appends a calendar event keyword if matched.
-
-## Calendar Context (optional)
-
-You can provide one or more `.ics` calendar files using the `--calendar-context` flag to enrich file names based on your schedule.
-
-Example:
-```bash
-python main.py --rename-by-date --calendar-context calendar.ics
-```
-
-This allows the script to include contextual slugs in filenames, like `2024-06-13-kickoff.pdf` or `2024-07-01-vacation.pdf`, based on events scheduled that day.
+Runs a full workflow: Gmail sync, local invoice processing, and travel report generation for the current year.
