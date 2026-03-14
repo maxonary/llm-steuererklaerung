@@ -123,7 +123,27 @@ def download_pdf_attachments(
             yield dest
 
 
-def extract_pdf_links(full_message: dict) -> list[str]:
+def _extract_anchor_context(body_fragments: list[str], max_chars: int = 4000) -> str:
+    soup = BeautifulSoup("\n".join(body_fragments), "html.parser")
+    lines: list[str] = []
+    total = 0
+    for i, anchor in enumerate(soup.find_all("a"), 1):
+        href = (anchor.get("href") or "").strip()
+        if not href:
+            continue
+        text = (anchor.get_text(strip=True) or "")[:80]
+        parent_text = ""
+        if anchor.parent:
+            parent_text = (anchor.parent.get_text(strip=True) or "")[:50]
+        line = f"{i}. [{text}]({href}) -- context: \"{parent_text}\""
+        if total + len(line) > max_chars:
+            break
+        lines.append(line)
+        total += len(line) + 1
+    return "\n".join(lines)
+
+
+def extract_pdf_links(full_message: dict, *, use_llm_fallback: bool = False) -> list[str]:
     body_fragments: list[str] = []
     for part in full_message.get("payload", {}).get("parts", []):
         mime = part.get("mimeType")
@@ -143,6 +163,24 @@ def extract_pdf_links(full_message: dict) -> list[str]:
             cleaned = href.strip(">)].,;\"'")
             if cleaned not in urls:
                 urls.append(cleaned)
+
+    if not urls and use_llm_fallback:
+        context = _extract_anchor_context(body_fragments)
+        if context:
+            from invoice_app.classifier import extract_links_with_llm
+
+            subject = ""
+            sender = ""
+            for h in full_message.get("payload", {}).get("headers", []):
+                if h["name"].lower() == "subject":
+                    subject = h["value"]
+                if h["name"].lower() == "from":
+                    sender = h["value"]
+            llm_urls = extract_links_with_llm(subject, sender, context)
+            if llm_urls:
+                print(f"[i] LLM found {len(llm_urls)} link(s) for message")
+            urls.extend(llm_urls)
+
     return urls
 
 

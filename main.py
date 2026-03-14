@@ -248,7 +248,7 @@ def run_sync_gmail(args) -> None:
             )
             statuses.append(status)
 
-        urls = gmail_sync.extract_pdf_links(full_message)
+        urls = gmail_sync.extract_pdf_links(full_message, use_llm_fallback=True)
         for url in urls:
             downloaded = gmail_sync.download_pdf_from_url(url, DOWNLOAD_DIR)
             if not downloaded:
