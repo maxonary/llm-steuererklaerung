@@ -199,6 +199,8 @@ def download_pdf_from_url(url: str, save_dir: str) -> Optional[str]:
     filename = os.path.basename(url.split("?")[0]) or "download.pdf"
     if not filename.lower().endswith(".pdf"):
         filename = f"{filename}.pdf"
+    if len(filename) > 120:
+        filename = f"{filename[:112]}.pdf"
     dest = _unique_file_path(os.path.join(save_dir, filename))
     with open(dest, "wb") as f:
         f.write(response.content)
