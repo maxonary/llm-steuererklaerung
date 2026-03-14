@@ -29,15 +29,25 @@ def infer_vendor(subject: str, text: str) -> str:
 
 
 def categorize_invoice(text: str) -> str:
-    prompt = f"""
-You are an invoice assistant. Categorize this invoice into one of these categories:
-- Work Equipment
-- Insurance
-- Travel
-- Food
-- Lifestyle
-- Other
-Only return one category name.
+    prompt = f"""You are a tax assistant for a self-employed person (Selbständiger) in Germany.
+Categorize this invoice into one of these categories:
+
+- Work Equipment (computers, software, office supplies, business tools)
+- Insurance (business-related insurance, Haftpflicht, Berufshaftpflicht)
+- Travel (Deutsche Bahn, flights, Uber/Bolt rides for business, hotels, transport)
+- Food (business meals, Bewirtung)
+- Subscriptions (SaaS, cloud services, professional memberships)
+- Not Deductible (personal purchases, sneakers, entertainment, personal lifestyle)
+- Other (deductible items that don't fit above categories)
+
+The person is a Freiberufler (freelance IT/software). Consider:
+- Deutsche Bahn, SBB, Bolt, Uber rides, flights, hotels = Travel
+- Google Ads, cloud hosting, domains, SaaS tools = Subscriptions
+- Computers, monitors, keyboards, software licenses = Work Equipment
+- Business meals with clients/partners = Food (Bewirtung)
+- Personal purchases (clothing, sneakers, entertainment, personal electronics) = Not Deductible
+
+Only return the category name.
 
 Invoice:
 {text}
@@ -54,8 +64,41 @@ Invoice:
         response = ollama.chat(model=MODEL, messages=[{"role": "user", "content": prompt}])
         result = response["message"]["content"].strip()
 
-    allowed = {"Work Equipment", "Insurance", "Travel", "Food", "Lifestyle", "Other"}
+    allowed = {"Work Equipment", "Insurance", "Travel", "Food", "Subscriptions", "Not Deductible", "Other"}
     return result if result in allowed else "Other"
+
+
+def triage_review_item(subject: str, sender: str) -> str:
+    prompt = f"""You are an email triage assistant. Based on the email subject and sender, classify whether this email contains or links to an invoice/receipt.
+
+Subject: {subject}
+From: {sender}
+
+Classify as one of:
+- not_invoice — delivery notification, order confirmation without receipt, marketing, conversation thread, account alert
+- likely_invoice — real invoice/receipt email where PDF might be downloadable from a portal or attached
+- uncertain — can't tell from subject/sender alone
+
+Return only one of: not_invoice, likely_invoice, uncertain"""
+
+    try:
+        if USE_OPENAI and OPENAI_API_KEY:
+            client = openai.OpenAI(api_key=OPENAI_API_KEY)
+            response = client.chat.completions.create(
+                model=OPENAI_MODEL,
+                messages=[{"role": "user", "content": prompt}],
+                max_tokens=10,
+            )
+            result = response.choices[0].message.content.strip().lower()
+        else:
+            response = ollama.chat(model=MODEL, messages=[{"role": "user", "content": prompt}])
+            result = response["message"]["content"].strip().lower()
+
+        if result in {"not_invoice", "likely_invoice", "uncertain"}:
+            return result
+        return "uncertain"
+    except Exception:
+        return "uncertain"
 
 
 def extract_links_with_llm(subject: str, sender: str, links_context: str) -> list[str]:

@@ -127,6 +127,36 @@ def upsert_invoice(record: InvoiceRecord, db_path: str = DB_PATH) -> None:
         conn.close()
 
 
+def update_invoice(
+    invoice_id: str,
+    *,
+    status: str | None = None,
+    file_path: str | None = None,
+    category: str | None = None,
+    notes: str | None = None,
+    db_path: str = DB_PATH,
+) -> None:
+    fields: dict[str, object] = {}
+    if status is not None:
+        fields["status"] = status
+    if file_path is not None:
+        fields["file_path"] = file_path
+    if category is not None:
+        fields["category"] = category
+    if notes is not None:
+        fields["notes"] = notes
+    if not fields:
+        return
+    set_clause = ", ".join(f"{k} = ?" for k in fields)
+    params = list(fields.values()) + [invoice_id]
+    conn = get_conn(db_path)
+    try:
+        conn.execute(f"UPDATE invoices SET {set_clause} WHERE invoice_id = ?", params)
+        conn.commit()
+    finally:
+        conn.close()
+
+
 def find_invoices(
     *,
     vendor: str | None = None,
