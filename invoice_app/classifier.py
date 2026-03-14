@@ -57,3 +57,35 @@ Invoice:
     allowed = {"Work Equipment", "Insurance", "Travel", "Food", "Lifestyle", "Other"}
     return result if result in allowed else "Other"
 
+
+def extract_links_with_llm(subject: str, sender: str, links_context: str) -> list[str]:
+    prompt = f"""You are an email analysis assistant. Given the following email metadata and a list of links found in the email body, identify which URLs are most likely direct invoice or receipt PDF download links.
+
+Subject: {subject}
+From: {sender}
+
+Links found in email:
+{links_context}
+
+Return only the URLs that are most likely invoice/receipt PDF download links, one per line.
+If none of the links appear to be invoice download links, return "NONE".
+"""
+    try:
+        if USE_OPENAI and OPENAI_API_KEY:
+            client = openai.OpenAI(api_key=OPENAI_API_KEY)
+            response = client.chat.completions.create(
+                model=OPENAI_MODEL,
+                messages=[{"role": "user", "content": prompt}],
+                max_tokens=300,
+            )
+            result = response.choices[0].message.content.strip()
+        else:
+            response = ollama.chat(model=MODEL, messages=[{"role": "user", "content": prompt}])
+            result = response["message"]["content"].strip()
+
+        if result.upper() == "NONE":
+            return []
+        return [line.strip() for line in result.splitlines() if line.strip().startswith("http")]
+    except Exception:
+        return []
+
