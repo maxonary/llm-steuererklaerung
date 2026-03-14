@@ -1,13 +1,22 @@
+import json
 import os
 from reportlab.lib.pagesizes import A4
 from reportlab.pdfgen import canvas
 from PyPDF2 import PdfReader, PdfWriter
+from PyPDF2.generic import NameObject, createStringObject
 from datetime import datetime
 from dotenv import load_dotenv
+from langfuse import Langfuse
 load_dotenv()
 
 DEFAULT_SIGNATURE_PATH = os.getenv("DEFAULT_SIGNATURE_PATH", "signature.png")
 DEFAULT_SIGNATURE_NAME = os.getenv("DEFAULT_SIGNATURE_NAME", "")
+
+langfuse = Langfuse(
+    public_key=os.getenv("LANGFUSE_PUBLIC_KEY"),
+    secret_key=os.getenv("LANGFUSE_SECRET_KEY"),
+    host=os.getenv("LANGFUSE_HOST", "https://cloud.langfuse.com")
+)
 
 def prompt_user_info(initial_info=None):
     """
@@ -65,17 +74,27 @@ def screen_pdf_for_info(pdf_path):
             text = "\n".join(page.get_text() for page in doc)
             return text[:2000]
     text = extract_text_from_pdf(pdf_path)
-    # Prepare prompt
+    # Prepare improved prompt for extraction, especially for delivery-style invoices
     prompt = f"""
-Du bist ein Assistent für Bewirtungsbelege. Extrahiere die folgenden Felder aus dem folgenden Bewirtungsbeleg oder Restaurantbeleg (so gut wie möglich, auch wenn nicht alle Informationen vorhanden sind):
+Du bist ein Assistent für Bewirtungsbelege. Extrahiere die folgenden Felder aus Restaurantrechnungen oder Lieferbelegen (wie z. B. von Uber Eats):
 
-- datum_bewirtung: Datum der Bewirtung (z.B. 12.03.2024)
-- ort_bewirtung: Name und Anschrift des Restaurants
+Hinweise zur Extraktion:
+- Verwende den Wert neben "Gesamt" oder "Insgesamt" als `rechnungsbetrag` (nicht Zwischensumme).
+- Verwende das Datum oben rechts auf der Seite als `datum_bewirtung`.
+- Wenn es einen Bereich "Geliefert an" gibt, verwende ihn für `ort_bewirtung`.
+- Ignoriere Angaben wie Zwischensumme, Rabatte, Liefergebühr oder temporäre Autorisierungen.
+- Wenn keine Personennamen genannt sind, lasse `personen` leer.
+- Gib Trinkgeld nur an, wenn es explizit aufgeführt ist.
+
+Extrahiere die folgenden Felder (alle Felder als Zeichenkette, `personen` als Liste):
+
+- datum_bewirtung: Datum der Bewirtung (z.B. 06.10.2023)
+- ort_bewirtung: Name und Adresse des Restaurants (oder Lieferadresse bei Delivery)
 - anlass: Anlass der Bewirtung (z.B. Geschäftsessen mit Kunde XY)
-- personen: Liste der bewirteten Personen (nur Namen, max 10)
-- rechnungsbetrag: Gesamtbetrag der Rechnung in EUR (ohne €-Zeichen)
-- trinkgeld: Trinkgeld in EUR (nur Zahl, falls erkennbar, sonst leer)
-- ort_datum_unterschrift: Ort und Datum für Unterschrift (z.B. Ort, Datum)
+- personen: Liste der bewirteten Personen (nur Namen, max. 10)
+- rechnungsbetrag: Betrag in EUR (z.B. 25.60)
+- trinkgeld: Trinkgeldbetrag in EUR (z.B. 3.00) — falls explizit vorhanden
+- ort_datum_unterschrift: Ort und Datum für Unterschrift (z.B. Berlin, 06.10.2023)
 
 Gib das Ergebnis als JSON-Objekt mit diesen Feldern zurück.
 
@@ -84,9 +103,15 @@ PDF-Text:
 {text}
 \"\"\"
 """
-    # Try OpenAI or Ollama depending on config
+    trace = langfuse.trace(name="screen_pdf_for_info", user_id="user_id_or_email")
     try:
-        import os
+        # Before LLM call
+        prompt_span = trace.span(
+            name="llm_prompt",
+            input=prompt,
+            metadata={"pdf_path": pdf_path}
+        )
+        # Try OpenAI or Ollama depending on config
         if os.getenv("USE_OPENAI", "False").lower() in ["1", "true", "yes"]:
             import openai
             model = os.getenv("OPENAI_MODEL", "gpt-3.5-turbo")
@@ -102,7 +127,9 @@ PDF-Text:
             model = os.getenv("MODEL", "mistral")
             response = ollama.chat(model=model, messages=[{"role": "user", "content": prompt}])
             content = response['message']['content']
+        prompt_span.end(output=content)
     except Exception as e:
+        prompt_span.end(output=str(e), level="ERROR")
         print(f"[!] LLM-Extraktion fehlgeschlagen: {e}")
         content = ""
 
@@ -261,12 +288,12 @@ def insert_signature_area():
         else:
             print("Bitte 'y', 'n' oder 'custom' eingeben.")
 
-def attach_to_invoice(original_pdf, filled_beleg_pdf, output_path=None):
+def attach_to_invoice(original_pdf, filled_beleg_pdf, info_dict, output_path=None):
     """
     Prepend filled Bewirtungsbeleg to the invoice PDF and save result.
     Write to a temporary file first, only replacing the original if successful.
+    Also embed a Bewirtungsbeleg status field into the PDF metadata.
     """
-    # Default output_path: overwrite original invoice
     output_path = output_path or original_pdf
     tmp_path = f"{original_pdf}.tmp.pdf"
     merger = PdfWriter()
@@ -280,13 +307,16 @@ def attach_to_invoice(original_pdf, filled_beleg_pdf, output_path=None):
         inv_reader = PdfReader(inv_f)
         for page in inv_reader.pages:
             merger.add_page(page)
-    # Add marker to first page (metadata)
-    merger.add_metadata({"/BewirtungsbelegPrepended": "True"})
-    # Write to temporary file first
+    # Add marker and status to metadata
+    info_json = json.dumps(info_dict)
+    merger.add_metadata({
+        "/BewirtungsbelegPrepended": "True",
+        "/BewirtungsbelegStatus": "done",
+        "/BewirtungsbelegData": info_json
+    })
     try:
         with open(tmp_path, "wb") as out_f:
             merger.write(out_f)
-        # If write succeeds, replace the original
         os.replace(tmp_path, output_path)
         print(f"Neue PDF gespeichert als {output_path}")
         return output_path
@@ -295,6 +325,61 @@ def attach_to_invoice(original_pdf, filled_beleg_pdf, output_path=None):
         if os.path.exists(tmp_path):
             os.remove(tmp_path)
         return None
+
+
+# --- PDF Form Data Helper ---
+def get_pdf_form_data(pdf_path):
+    """
+    Read and return the BewirtungsbelegData field from PDF metadata, if available.
+    Returns a dict or empty dict.
+    """
+    try:
+        with open(pdf_path, "rb") as f:
+            reader = PdfReader(f)
+            md = reader.metadata
+            raw_data = md.get("/BewirtungsbelegData")
+            if raw_data:
+                return json.loads(raw_data)
+    except Exception as e:
+        print(f"[!] Fehler beim Lesen von PDF-Formulardaten: {e}")
+    return {}
+
+
+# --- PDF Status Helpers ---
+def get_pdf_status(pdf_path):
+    """
+    Get the current status metadata of a PDF.
+    Returns 'done', 'in progress', or 'missing'.
+    """
+    try:
+        with open(pdf_path, "rb") as f:
+            reader = PdfReader(f)
+            md = reader.metadata
+            return md.get("/BewirtungsbelegStatus", "in progress")
+    except Exception:
+        return "in progress"
+
+def set_pdf_status(pdf_path, new_status):
+    """
+    Update the status metadata of a PDF.
+    """
+    try:
+        reader = PdfReader(pdf_path)
+        writer = PdfWriter()
+        for page in reader.pages:
+            writer.add_page(page)
+        md = reader.metadata or {}
+        new_md = {NameObject(k): createStringObject(str(v)) for k, v in md.items()}
+        new_md[NameObject("/BewirtungsbelegStatus")] = createStringObject(new_status)
+        writer.add_metadata(new_md)
+        temp_path = f"{pdf_path}.tmp.pdf"
+        with open(temp_path, "wb") as f:
+            writer.write(f)
+        os.replace(temp_path, pdf_path)
+        return True
+    except Exception as e:
+        print(f"[!] Fehler beim Aktualisieren des Status: {e}")
+        return False
 
 def check_for_beleg_marker(pdf_path):
     """
@@ -338,7 +423,7 @@ def main(invoice_path=None, use_llm=False):
     # Generate filled PDF
     beleg_pdf = generate_filled_pdf(info, signature_img_path=sig_path)
     # Prepend to invoice
-    attach_to_invoice(invoice_path, beleg_pdf)
+    attach_to_invoice(invoice_path, beleg_pdf, info)
 
 if __name__ == "__main__":
     main()

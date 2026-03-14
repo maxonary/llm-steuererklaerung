@@ -10,11 +10,12 @@ from dotenv import load_dotenv
 from io import BytesIO
 from storage3.exceptions import StorageApiError
 
-load_dotenv()  # Load environment variables from .env file
+load_dotenv()
+
 # --- Supabase Setup ---
 SUPABASE_URL = os.getenv("SUPABASE_URL")
-SUPABASE_KEY = os.getenv("SUPABASE_KEY")
-supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
+supabase: Client = create_client(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
 
 # --- FastAPI App ---
 app = FastAPI()
@@ -114,4 +115,4 @@ def gmail_fetch():
     service = build('gmail', 'v1', credentials=credentials)
     results = service.users().messages().list(userId='me', maxResults=5).execute()
     messages = results.get('messages', [])
-    return {"messages": messages} 
+    return {"messages": messages}
