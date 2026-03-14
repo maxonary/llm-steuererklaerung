@@ -24,7 +24,7 @@ echo ""
 
 # 2. Sync
 echo "[2/6] Syncing Gmail invoices for 2024..."
-python3 main.py sync-gmail --since 2024/01/01 --window-months 12 --apply-labels
+python3 main.py sync-gmail --since 2024/01/01 --before 2025/01/01 --apply-labels
 echo ""
 
 # 3. Review check

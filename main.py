@@ -215,13 +215,20 @@ def run_sync_gmail(args) -> None:
     from invoice_app import gmail_sync
 
     service = gmail_sync.gmail_authenticate()
-    query = gmail_sync.build_search_query(since=args.since, window_months=args.window_months)
+    query = gmail_sync.build_search_query(since=args.since, before=getattr(args, "before", None), window_months=args.window_months)
     print(f"[i] Gmail search query: {query}")
     messages = gmail_sync.search_messages(service, query)
     print(f"[i] Found {len(messages)} matching emails.")
 
+    already_seen = index.known_message_ids()
+    skipped = sum(1 for m in messages if m["id"] in already_seen)
+    if skipped:
+        print(f"[i] Skipping {skipped} already-processed emails.")
+
     for item in messages:
         message_id = item["id"]
+        if message_id in already_seen:
+            continue
         full_message = gmail_sync.load_message(service, message_id)
         summary = gmail_sync.message_summary(full_message)
 
@@ -425,6 +432,7 @@ def parse_args():
 
     sync_cmd = sub.add_parser("sync-gmail", help="Sync Gmail invoices into local folders + index")
     sync_cmd.add_argument("--since", help="Gmail after: date format YYYY/MM/DD")
+    sync_cmd.add_argument("--before", help="Gmail before: date format YYYY/MM/DD")
     sync_cmd.add_argument("--window-months", type=int, default=18)
     sync_cmd.add_argument("--apply-labels", action="store_true", default=True)
     sync_cmd.add_argument("--no-apply-labels", action="store_false", dest="apply_labels")

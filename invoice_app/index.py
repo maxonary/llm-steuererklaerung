@@ -167,6 +167,17 @@ def find_invoices(
         conn.close()
 
 
+def known_message_ids(db_path: str = DB_PATH) -> set[str]:
+    conn = get_conn(db_path)
+    try:
+        rows = conn.execute(
+            "SELECT DISTINCT source_message_id FROM invoices WHERE source_message_id IS NOT NULL"
+        ).fetchall()
+        return {row[0] for row in rows}
+    finally:
+        conn.close()
+
+
 def find_by_sha(sha256: str, db_path: str = DB_PATH) -> sqlite3.Row | None:
     conn = get_conn(db_path)
     try:

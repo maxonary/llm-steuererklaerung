@@ -35,13 +35,17 @@ def gmail_authenticate() -> object:
 def build_search_query(
     *,
     since: Optional[str] = None,
+    before: Optional[str] = None,
     window_months: int = 18,
     keywords: Optional[list[str]] = None,
 ) -> str:
     kw = keywords or KEYWORDS
     keyword_part = " OR ".join(kw)
     if since:
-        return f"({keyword_part}) after:{since}"
+        q = f"({keyword_part}) after:{since}"
+        if before:
+            q += f" before:{before}"
+        return q
     # Gmail query language supports m for months.
     return f"({keyword_part}) newer_than:{window_months}m"
 
