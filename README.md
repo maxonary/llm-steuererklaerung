@@ -135,6 +135,8 @@ Prompts you to generate a Bewirtungsbeleg for each invoice in the `Invoices/Bewi
 - `find`: Query the local index by vendor/category/status/year/month/text.
 - `export-accountant`: Build monthly ZIP + CSV accountant handoff packages.
 - `reindex`: Rebuild the local index from `Invoices/` category folders.
+- `migrate-categories`: One-time migration from old categories to EÜR-aligned names.
+- `reclassify --year YYYY`: Re-run the LLM classifier on existing invoices (e.g. after a prompt update).
 - `--no-apply-labels` (with `sync-gmail`): Keep Gmail untouched while still indexing locally.
 
 ```bash
