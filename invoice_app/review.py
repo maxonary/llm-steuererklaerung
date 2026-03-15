@@ -64,10 +64,12 @@ def run_interactive_review(
                 if ingest_fn is None:
                     print("  Attach not available (no ingest function provided).")
                     continue
-                pdf_path = input("  PDF path: ").strip()
+                import os
+                raw = input("  PDF path: ")
+                pdf_path = raw.replace("\n", "").replace("\r", "").strip().strip("'\"")
+                pdf_path = os.path.expanduser(pdf_path)
                 if not pdf_path:
                     continue
-                import os
                 if not os.path.isfile(pdf_path):
                     print(f"  File not found: {pdf_path}")
                     continue
