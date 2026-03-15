@@ -51,7 +51,7 @@ def main():
     st.title("🍽️ Bewirtungsbeleg Generator")
 
     # Choose input method
-    mode = st.radio("Select invoice source", ["Upload PDF", "Choose from 'Invoices/Food/' folder"])
+    mode = st.radio("Select invoice source", ["Upload PDF", "Choose from 'Invoices/Bewirtung/' folder"])
 
     pdf_path = None
     if mode == "Upload PDF":
@@ -62,13 +62,13 @@ def main():
             with open(pdf_path, "wb") as f:
                 f.write(uploaded_file.read())
     else:
-        food_dir = os.path.join("Invoices", "Food")
+        food_dir = os.path.join("Invoices", "Bewirtung")
         if not os.path.exists(food_dir):
             st.error(f"No such directory: {food_dir}")
             return
         pdfs = [f for f in os.listdir(food_dir) if f.lower().endswith(".pdf")]
         if not pdfs:
-            st.warning("No PDFs found in the Food folder.")
+            st.warning("No PDFs found in the Bewirtung folder.")
             return
 
         statuses = {f: get_pdf_status(os.path.join(food_dir, f)) for f in pdfs}

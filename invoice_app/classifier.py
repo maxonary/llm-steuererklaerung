@@ -29,25 +29,28 @@ def infer_vendor(subject: str, text: str) -> str:
 
 
 def categorize_invoice(text: str) -> str:
-    prompt = f"""You are a tax assistant for a self-employed person (Selbständiger) in Germany.
-Categorize this invoice into one of these categories:
+    prompt = f"""You are a German tax assistant for a Freiberufler (freelance IT/software consultant).
+Categorize this invoice into one of the following EÜR-aligned categories (Anlage EÜR):
 
-- Work Equipment (computers, software, office supplies, business tools)
-- Insurance (business-related insurance, Haftpflicht, Berufshaftpflicht)
-- Travel (Deutsche Bahn, flights, Uber/Bolt rides for business, hotels, transport)
-- Food (business meals, Bewirtung)
-- Subscriptions (SaaS, cloud services, professional memberships)
-- Not Deductible (personal purchases, sneakers, entertainment, personal lifestyle)
-- Other (deductible items that don't fit above categories)
+- Fremdleistungen (Line 27: subcontractor invoices, freelancers paid for project work)
+- Arbeitsmittel (Line 28/29: computers, monitors, keyboards, software licenses, office supplies)
+- Reisekosten (Line 31: Deutsche Bahn, SBB, flights, Uber/Bolt, hotels, transport for business travel)
+- Bewirtung (Line 32: business meals with clients/partners, restaurant receipts)
+- Raumkosten (Line 34: rent, home office costs, coworking spaces)
+- Versicherungen (Line 35: Berufshaftpflicht, business insurance, professional liability)
+- Telekommunikation (Line 37: phone bills, internet, mobile contracts)
+- Übrige Betriebsausgaben (Line 38: SaaS, cloud hosting, domains, Google Ads, memberships, other deductible)
+- Nicht abzugsfähig (personal purchases, clothing, sneakers, entertainment, non-deductible items)
 
-The person is a Freiberufler (freelance IT/software). Consider:
-- Deutsche Bahn, SBB, Bolt, Uber rides, flights, hotels = Travel
-- Google Ads, cloud hosting, domains, SaaS tools = Subscriptions
-- Computers, monitors, keyboards, software licenses = Work Equipment
-- Business meals with clients/partners = Food (Bewirtung)
-- Personal purchases (clothing, sneakers, entertainment, personal electronics) = Not Deductible
+Key distinctions:
+- SaaS tools, cloud hosting, domains, ads = Übrige Betriebsausgaben (NOT Arbeitsmittel)
+- Phone/internet bills = Telekommunikation
+- Hardware (computers, monitors) = Arbeitsmittel
+- Deutsche Bahn, flights, Uber, hotels = Reisekosten
+- Restaurant/meal receipts with business context = Bewirtung
+- Subcontractor/freelancer invoices = Fremdleistungen
 
-Only return the category name.
+Only return the category name, nothing else.
 
 Invoice:
 {text}
@@ -64,8 +67,12 @@ Invoice:
         response = ollama.chat(model=MODEL, messages=[{"role": "user", "content": prompt}])
         result = response["message"]["content"].strip()
 
-    allowed = {"Work Equipment", "Insurance", "Travel", "Food", "Subscriptions", "Not Deductible", "Other"}
-    return result if result in allowed else "Other"
+    allowed = {
+        "Fremdleistungen", "Arbeitsmittel", "Reisekosten", "Bewirtung",
+        "Raumkosten", "Versicherungen", "Telekommunikation",
+        "Übrige Betriebsausgaben", "Nicht abzugsfähig",
+    }
+    return result if result in allowed else "Übrige Betriebsausgaben"
 
 
 def triage_review_item(subject: str, sender: str) -> str:

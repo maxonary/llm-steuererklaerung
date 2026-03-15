@@ -115,7 +115,7 @@ def _migrate_review_queue(csv_path: str = "review_queue.csv") -> None:
                     ingest_date=InvoiceRecord.now_iso(),
                     amount=None,
                     currency="EUR",
-                    category="Other",
+                    category="Übrige Betriebsausgaben",
                     file_path=None,
                     sha256=None,
                     status=InvoiceStatus.NEEDS_REVIEW.value,
@@ -285,7 +285,7 @@ def run_sync_gmail(args) -> None:
                 ingest_date=InvoiceRecord.now_iso(),
                 amount=None,
                 currency="EUR",
-                category="Other",
+                category="Übrige Betriebsausgaben",
                 file_path=None,
                 sha256=None,
                 status=InvoiceStatus.NEEDS_REVIEW.value,
@@ -436,17 +436,16 @@ def run_reclassify(args) -> None:
 
 
 def run_reindex(args) -> None:
+    from invoice_app.storage import CATEGORIES
+
     count = 0
-    for category in [
-        "Work Equipment",
-        "Insurance",
-        "Travel",
-        "Food",
-        "Subscriptions",
-        "Not Deductible",
-        "Lifestyle",
-        "Other",
-    ]:
+    # Scan both new EÜR-aligned and legacy category folder names
+    legacy_categories = [
+        "Work Equipment", "Insurance", "Travel", "Food",
+        "Subscriptions", "Not Deductible", "Lifestyle", "Other",
+    ]
+    all_categories = list(dict.fromkeys(CATEGORIES + legacy_categories))
+    for category in all_categories:
         category_dir = os.path.join(SORTED_DIR, category)
         if not os.path.isdir(category_dir):
             continue
@@ -490,6 +489,79 @@ def run_reindex(args) -> None:
     print(f"[✓] Reindexed invoices: {count}")
 
 
+CATEGORY_MIGRATION_MAP = {
+    "Work Equipment": "Arbeitsmittel",
+    "Insurance": "Versicherungen",
+    "Travel": "Reisekosten",
+    "Food": "Bewirtung",
+    "Subscriptions": "Übrige Betriebsausgaben",
+    "Not Deductible": "Nicht abzugsfähig",
+    "Lifestyle": "Nicht abzugsfähig",
+    "Other": "Übrige Betriebsausgaben",
+}
+
+
+def run_migrate_categories(args) -> None:
+    import shutil
+
+    conn = index.get_conn()
+
+    # 1. Update categories in DB
+    db_changes = 0
+    for old_cat, new_cat in CATEGORY_MIGRATION_MAP.items():
+        cursor = conn.execute(
+            "UPDATE invoices SET category = ? WHERE category = ?",
+            (new_cat, old_cat),
+        )
+        db_changes += cursor.rowcount
+    conn.commit()
+    print(f"[i] Updated {db_changes} DB rows with new categories.")
+
+    # 2. Rename Invoices/ subdirectories
+    renamed_dirs = 0
+    for old_cat, new_cat in CATEGORY_MIGRATION_MAP.items():
+        old_dir = os.path.join(SORTED_DIR, old_cat)
+        new_dir = os.path.join(SORTED_DIR, new_cat)
+        if not os.path.isdir(old_dir):
+            continue
+        if os.path.isdir(new_dir):
+            # Merge: move files from old into existing new dir
+            for fname in os.listdir(old_dir):
+                src = os.path.join(old_dir, fname)
+                dst = os.path.join(new_dir, fname)
+                if os.path.exists(dst):
+                    base, ext = os.path.splitext(fname)
+                    i = 1
+                    while os.path.exists(dst):
+                        dst = os.path.join(new_dir, f"{base}_{i}{ext}")
+                        i += 1
+                shutil.move(src, dst)
+            os.rmdir(old_dir)
+            print(f"  Merged {old_cat}/ into {new_cat}/")
+        else:
+            os.rename(old_dir, new_dir)
+            print(f"  Renamed {old_cat}/ → {new_cat}/")
+        renamed_dirs += 1
+
+    # 3. Update file_path column in DB for moved files
+    path_updates = 0
+    for old_cat, new_cat in CATEGORY_MIGRATION_MAP.items():
+        old_prefix = os.path.join(SORTED_DIR, old_cat) + os.sep
+        new_prefix = os.path.join(SORTED_DIR, new_cat) + os.sep
+        cursor = conn.execute(
+            "UPDATE invoices SET file_path = ? || substr(file_path, ?) "
+            "WHERE file_path LIKE ? || '%'",
+            (new_prefix, len(old_prefix) + 1, old_prefix),
+        )
+        path_updates += cursor.rowcount
+    conn.commit()
+    conn.close()
+
+    print(f"[i] Updated {path_updates} file paths in DB.")
+    print(f"[i] Renamed {renamed_dirs} directories.")
+    print("[✓] Category migration complete.")
+
+
 def parse_args():
     parser = argparse.ArgumentParser()
     sub = parser.add_subparsers(dest="command")
@@ -519,6 +591,7 @@ def parse_args():
 
     sub.add_parser("reindex", help="Reindex sorted invoice folders into SQLite")
     sub.add_parser("process-local", help="Process local PDFs in temp_invoices/")
+    sub.add_parser("migrate-categories", help="Migrate old categories to EÜR-aligned names")
 
     review_cmd = sub.add_parser("review", help="AI-assisted review of needs_review items")
     review_cmd.add_argument("--year", type=int)
@@ -576,7 +649,7 @@ def main():
     if args.generate_bewirtungsbeleg:
         from bewirtungsbeleg import main as generate_bewirtungsbeleg
 
-        food_dir = os.path.join(SORTED_DIR, "Food")
+        food_dir = os.path.join(SORTED_DIR, "Bewirtung")
         if os.path.isdir(food_dir):
             for pdf in sorted(os.listdir(food_dir)):
                 if pdf.lower().endswith(".pdf"):
@@ -597,6 +670,8 @@ def main():
         run_review(args)
     elif args.command == "reclassify":
         run_reclassify(args)
+    elif args.command == "migrate-categories":
+        run_migrate_categories(args)
 
 
 if __name__ == "__main__":

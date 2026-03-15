@@ -8,14 +8,15 @@ from datetime import datetime
 from typing import Optional
 
 CATEGORIES = [
-    "Work Equipment",
-    "Insurance",
-    "Travel",
-    "Food",
-    "Subscriptions",
-    "Not Deductible",
-    "Lifestyle",
-    "Other",
+    "Fremdleistungen",
+    "Arbeitsmittel",
+    "Reisekosten",
+    "Bewirtung",
+    "Raumkosten",
+    "Versicherungen",
+    "Telekommunikation",
+    "Übrige Betriebsausgaben",
+    "Nicht abzugsfähig",
 ]
 
 
@@ -86,7 +87,7 @@ def move_to_category(
     invoice_date: Optional[str],
     vendor: Optional[str],
 ) -> str:
-    safe_category = category if category in CATEGORIES else "Other"
+    safe_category = category if category in CATEGORIES else "Übrige Betriebsausgaben"
     dest_dir = os.path.join(sorted_dir, safe_category)
     os.makedirs(dest_dir, exist_ok=True)
 
@@ -102,11 +103,13 @@ def move_to_category(
 
 def infer_document_type(category: str, file_path: str) -> str:
     lower = os.path.basename(file_path).lower() if file_path else ""
+    if category == "Reisekosten":
+        return "Reisekostenbeleg"
+    if category == "Bewirtung":
+        return "Bewirtungsbeleg"
     if "bewirtungsbeleg" in lower:
         return "Bewirtungsbeleg"
-    if category == "Travel":
-        return "Reisekostenbeleg"
-    if category in {"Work Equipment", "Insurance", "Food", "Subscriptions", "Not Deductible", "Lifestyle", "Other"}:
+    if category in CATEGORIES:
         return "Eingangsrechnung"
     return "Sonstiges"
 
