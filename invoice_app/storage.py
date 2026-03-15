@@ -12,6 +12,8 @@ CATEGORIES = [
     "Insurance",
     "Travel",
     "Food",
+    "Subscriptions",
+    "Not Deductible",
     "Lifestyle",
     "Other",
 ]
@@ -104,7 +106,7 @@ def infer_document_type(category: str, file_path: str) -> str:
         return "Bewirtungsbeleg"
     if category == "Travel":
         return "Reisekostenbeleg"
-    if category in {"Work Equipment", "Insurance", "Food", "Lifestyle", "Other"}:
+    if category in {"Work Equipment", "Insurance", "Food", "Subscriptions", "Not Deductible", "Lifestyle", "Other"}:
         return "Eingangsrechnung"
     return "Sonstiges"
 

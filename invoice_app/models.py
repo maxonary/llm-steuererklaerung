@@ -18,6 +18,7 @@ class InvoiceStatus(str, Enum):
     NEEDS_REVIEW = "needs_review"
     EXPORTED = "exported"
     DUPLICATE = "duplicate"
+    DISMISSED = "dismissed"
 
 
 @dataclass

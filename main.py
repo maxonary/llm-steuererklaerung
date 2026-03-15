@@ -215,13 +215,20 @@ def run_sync_gmail(args) -> None:
     from invoice_app import gmail_sync
 
     service = gmail_sync.gmail_authenticate()
-    query = gmail_sync.build_search_query(since=args.since, window_months=args.window_months)
+    query = gmail_sync.build_search_query(since=args.since, before=getattr(args, "before", None), window_months=args.window_months)
     print(f"[i] Gmail search query: {query}")
     messages = gmail_sync.search_messages(service, query)
     print(f"[i] Found {len(messages)} matching emails.")
 
+    already_seen = index.known_message_ids()
+    skipped = sum(1 for m in messages if m["id"] in already_seen)
+    if skipped:
+        print(f"[i] Skipping {skipped} already-processed emails.")
+
     for item in messages:
         message_id = item["id"]
+        if message_id in already_seen:
+            continue
         full_message = gmail_sync.load_message(service, message_id)
         summary = gmail_sync.message_summary(full_message)
 
@@ -366,6 +373,68 @@ def run_export_accountant(args) -> None:
         print(f"    CSV: {manifest_path}")
 
 
+def run_review(args) -> None:
+    from invoice_app.review import fetch_review_items, run_triage, run_interactive_review
+
+    items = fetch_review_items(year=args.year)
+    if not items:
+        print("No needs_review items found.")
+        return
+    print(f"[i] Found {len(items)} needs_review items.")
+
+    if args.no_triage:
+        triaged = [(item, "uncertain") for item in items]
+    else:
+        print("[i] Running LLM triage...")
+        triaged = run_triage(items)
+
+    if args.auto_dismiss:
+        auto = [t for t in triaged if t[1] == "not_invoice"]
+        for item, _ in auto:
+            index.update_invoice(item["invoice_id"], status="dismissed")
+        print(f"[i] Auto-dismissed {len(auto)} not_invoice items.")
+        triaged = [t for t in triaged if t[1] != "not_invoice"]
+
+    if not triaged:
+        print("No items remaining for review.")
+        return
+
+    run_interactive_review(triaged, ingest_fn=_ingest_pdf)
+
+
+def run_reclassify(args) -> None:
+    rows = index.find_invoices(year=args.year, category=args.category, status=args.status)
+    if not rows:
+        print("No matching invoices to reclassify.")
+        return
+
+    rows_with_files = [r for r in rows if r["file_path"] and os.path.isfile(r["file_path"])]
+    print(f"[i] Reclassifying {len(rows_with_files)} invoices (of {len(rows)} matched)...")
+
+    changed = 0
+    unchanged = 0
+    for i, row in enumerate(rows_with_files, 1):
+        text = extract_text_from_pdf(row["file_path"])
+        new_category = categorize_invoice(text)
+        old_category = row["category"]
+
+        if new_category != old_category:
+            new_path = move_to_category(
+                file_path=row["file_path"],
+                category=new_category,
+                sorted_dir=SORTED_DIR,
+                invoice_date=row["invoice_date"],
+                vendor=row["vendor"],
+            )
+            index.update_invoice(row["invoice_id"], category=new_category, file_path=new_path)
+            print(f"  [{i}] {row['vendor']}: {old_category} -> {new_category}")
+            changed += 1
+        else:
+            unchanged += 1
+
+    print(f"[done] Reclassified {changed + unchanged} items ({changed} changed, {unchanged} unchanged)")
+
+
 def run_reindex(args) -> None:
     count = 0
     for category in [
@@ -373,6 +442,8 @@ def run_reindex(args) -> None:
         "Insurance",
         "Travel",
         "Food",
+        "Subscriptions",
+        "Not Deductible",
         "Lifestyle",
         "Other",
     ]:
@@ -425,6 +496,7 @@ def parse_args():
 
     sync_cmd = sub.add_parser("sync-gmail", help="Sync Gmail invoices into local folders + index")
     sync_cmd.add_argument("--since", help="Gmail after: date format YYYY/MM/DD")
+    sync_cmd.add_argument("--before", help="Gmail before: date format YYYY/MM/DD")
     sync_cmd.add_argument("--window-months", type=int, default=18)
     sync_cmd.add_argument("--apply-labels", action="store_true", default=True)
     sync_cmd.add_argument("--no-apply-labels", action="store_false", dest="apply_labels")
@@ -447,6 +519,17 @@ def parse_args():
 
     sub.add_parser("reindex", help="Reindex sorted invoice folders into SQLite")
     sub.add_parser("process-local", help="Process local PDFs in temp_invoices/")
+
+    review_cmd = sub.add_parser("review", help="AI-assisted review of needs_review items")
+    review_cmd.add_argument("--year", type=int)
+    review_cmd.add_argument("--no-triage", action="store_true", help="Skip LLM triage")
+    review_cmd.add_argument("--auto-dismiss", action="store_true",
+                            help="Auto-dismiss items LLM marks as not_invoice")
+
+    reclassify_cmd = sub.add_parser("reclassify", help="Re-categorize invoices with improved prompt")
+    reclassify_cmd.add_argument("--year", type=int)
+    reclassify_cmd.add_argument("--category", help="Only reclassify items in this category")
+    reclassify_cmd.add_argument("--status", default="processed", help="Only reclassify items with this status")
 
     # Legacy flags retained for backward compatibility.
     parser.add_argument("--scan-gmail", action="store_true", help="Legacy alias for sync-gmail")
@@ -510,6 +593,10 @@ def main():
         run_reindex(args)
     elif args.command == "process-local":
         run_process_local(args)
+    elif args.command == "review":
+        run_review(args)
+    elif args.command == "reclassify":
+        run_reclassify(args)
 
 
 if __name__ == "__main__":
