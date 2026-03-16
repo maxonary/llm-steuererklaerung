@@ -4,6 +4,7 @@ import hashlib
 import os
 import re
 import shutil
+import unicodedata
 from datetime import datetime
 from typing import Optional
 
@@ -98,7 +99,9 @@ def move_to_category(
         filename = os.path.basename(file_path)
     dest_path = unique_destination(os.path.join(dest_dir, filename))
     shutil.move(file_path, dest_path)
-    return dest_path
+    # macOS APFS stores filenames in NFD Unicode; normalize so the DB path
+    # matches what C libraries (e.g. PyMuPDF fitz.open) see on disk.
+    return unicodedata.normalize("NFC", os.path.realpath(dest_path))
 
 
 def infer_document_type(category: str, file_path: str) -> str:

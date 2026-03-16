@@ -5,6 +5,7 @@ description = "Gmail Integration with local LLM to sort invoices into categories
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
+    "anthropic>=0.84.0",
     "browser-cookie3>=0.20.1",
     "bs4>=0.0.2",
     "dotenv>=0.9.9",
