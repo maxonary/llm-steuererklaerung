@@ -14,7 +14,7 @@ Generate Excel travel reports summarizing travel-related expenses (trips and mea
 The project also includes a Streamlit interface for interactively generating and attaching Bewirtungsbelege (German hospitality receipts) to your restaurant or meal invoices.
 
 **Features:**
-- Upload a PDF invoice or select one from your sorted `Invoices/Food/` folder
+- Upload a PDF invoice or select one from your sorted `Invoices/Bewirtung/` folder
 - Preview the original invoice and the generated Bewirtungsbeleg side by side
 - Use LLM-based extraction to prefill form fields, or enter/edit them manually
 - Optionally upload a signature image to be included on the Bewirtungsbeleg
@@ -27,7 +27,39 @@ This app is designed for freelancers, business owners, or anyone in Germany who 
 
 ---
 
-## Installing 
+## EÜR-Aligned Invoice Categories
+
+Invoice categories are aligned to the **Anlage EÜR** (Einnahmenüberschussrechnung), the German tax form used by Freiberufler and small businesses to report income and expenses. Using EÜR line numbers as categories means invoices map directly to tax filing lines — no manual re-sorting at year-end.
+
+| Category | EÜR Line | What goes here |
+|----------|----------|----------------|
+| **Fremdleistungen** | 27 | Subcontractor invoices, freelancers you paid |
+| **Arbeitsmittel** | 28/29 | Computers, monitors, software licenses, office supplies |
+| **Reisekosten** | 31 | Deutsche Bahn, flights, Uber/Bolt, hotels |
+| **Bewirtung** | 32 | Business meals with clients (70% deductible) |
+| **Raumkosten** | 34 | Rent, home office, coworking |
+| **Versicherungen** | 35 | Berufshaftpflicht, business insurance |
+| **Telekommunikation** | 37 | Phone, internet |
+| **Übrige Betriebsausgaben** | 38 | SaaS, cloud hosting, domains, ads, memberships |
+| **Nicht abzugsfähig** | — | Personal purchases, non-deductible items |
+
+The LLM classifier prompt includes these categories with examples and German tax context, so the model assigns the correct EÜR line from the start.
+
+If you're upgrading from the old ad-hoc categories (Work Equipment, Insurance, Travel, Food, Subscriptions, Not Deductible, Lifestyle, Other), run:
+
+```bash
+python3 main.py migrate-categories
+```
+
+This renames the `Invoices/` subdirectories, updates all category and file path references in the SQLite index, and merges any overlapping folders. After migrating, you can re-evaluate past invoices with the improved prompt:
+
+```bash
+python3 main.py reclassify --year 2024
+```
+
+---
+
+## Installing
 Install dependencies into a venv with UV. Make sure to have UV installed.
 ```bash
 uv sync
@@ -88,7 +120,7 @@ Enables caching of LLM results and multi-threaded processing to speed up report 
 ```bash
 python3 main.py --generate-bewirtungsbeleg --use-llm-for-beleg
 ```
-Prompts you to generate a Bewirtungsbeleg for each invoice in the `Invoices/Food/` folder, with fields automatically suggested by an LLM (ChatGPT or Ollama) and confirmed by you in the terminal.
+Prompts you to generate a Bewirtungsbeleg for each invoice in the `Invoices/Bewirtung/` folder, with fields automatically suggested by an LLM (ChatGPT or Ollama) and confirmed by you in the terminal.
 
 ### Optional Flags
 
@@ -103,6 +135,8 @@ Prompts you to generate a Bewirtungsbeleg for each invoice in the `Invoices/Food
 - `find`: Query the local index by vendor/category/status/year/month/text.
 - `export-accountant`: Build monthly ZIP + CSV accountant handoff packages.
 - `reindex`: Rebuild the local index from `Invoices/` category folders.
+- `migrate-categories`: One-time migration from old categories to EÜR-aligned names.
+- `reclassify --year YYYY`: Re-run the LLM classifier on existing invoices (e.g. after a prompt update).
 - `--no-apply-labels` (with `sync-gmail`): Keep Gmail untouched while still indexing locally.
 
 ```bash

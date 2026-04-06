@@ -155,12 +155,12 @@ def generate_travel_report(year, sorted_dir, calendar_context, force_include=Fal
             "date": date,
             "location": "",
             "purpose": llm_data.get("anlass", event or ""),
-            "duration": 10 if category == "Travel" else "",
-            "distance_km": llm_data.get("distance_km", "") if category == "Travel" else "",
+            "duration": 10 if category == "Reisekosten" else "",
+            "distance_km": llm_data.get("distance_km", "") if category == "Reisekosten" else "",
             "parking": amount if "park" in type_hint else "",
             "hotel": amount if "hotel" in type_hint else "",
             "transport": amount if ("transport" in type_hint or "taxi" in type_hint or "bahn" in type_hint) else "",
-            "meal": amount if category == "Food" else "",
+            "meal": amount if category == "Bewirtung" else "",
             "fee": amount if "fee" in type_hint else "",
             "file_paths": os.path.relpath(path)
         }
@@ -170,7 +170,7 @@ def generate_travel_report(year, sorted_dir, calendar_context, force_include=Fal
     if use_parallel:
         with ThreadPoolExecutor(max_workers=4) as executor:
             futures = []
-            for category in ["Travel", "Food"]:
+            for category in ["Reisekosten", "Bewirtung"]:
                 dir_path = os.path.join(sorted_dir, category)
                 if not os.path.isdir(dir_path):
                     continue
@@ -196,7 +196,7 @@ def generate_travel_report(year, sorted_dir, calendar_context, force_include=Fal
                     entries_by_date.setdefault(date, []).append(entry)
                     processed_count += 1
     else:
-        for category in ["Travel", "Food"]:
+        for category in ["Reisekosten", "Bewirtung"]:
             dir_path = os.path.join(sorted_dir, category)
             if not os.path.isdir(dir_path):
                 continue

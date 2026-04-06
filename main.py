@@ -115,7 +115,7 @@ def _migrate_review_queue(csv_path: str = "review_queue.csv") -> None:
                     ingest_date=InvoiceRecord.now_iso(),
                     amount=None,
                     currency="EUR",
-                    category="Other",
+                    category="Übrige Betriebsausgaben",
                     file_path=None,
                     sha256=None,
                     status=InvoiceStatus.NEEDS_REVIEW.value,
@@ -285,7 +285,7 @@ def run_sync_gmail(args) -> None:
                 ingest_date=InvoiceRecord.now_iso(),
                 amount=None,
                 currency="EUR",
-                category="Other",
+                category="Übrige Betriebsausgaben",
                 file_path=None,
                 sha256=None,
                 status=InvoiceStatus.NEEDS_REVIEW.value,
@@ -403,50 +403,115 @@ def run_review(args) -> None:
 
 
 def run_reclassify(args) -> None:
+    import json as _json
+
+    plan_file = getattr(args, "plan_file", None) or "data/reclassify_plan.json"
+
+    # --- apply mode: read a previously saved plan and execute accepted changes ---
+    if getattr(args, "apply_plan", False):
+        if not os.path.exists(plan_file):
+            print(f"[!] Plan file not found: {plan_file}")
+            return
+        with open(plan_file, encoding="utf-8") as f:
+            plan = _json.load(f)
+        applied = 0
+        skipped = 0
+        for entry in plan:
+            if not entry.get("accept", True):
+                skipped += 1
+                continue
+            file_path = os.path.realpath(entry["file_path"])
+            if not os.path.isfile(file_path):
+                print(f"  SKIP (missing): {entry['vendor']}")
+                skipped += 1
+                continue
+            new_cat = entry.get("override") or entry["new_category"]
+            new_path = move_to_category(
+                file_path=file_path,
+                category=new_cat,
+                sorted_dir=SORTED_DIR,
+                invoice_date=entry.get("invoice_date"),
+                vendor=entry.get("vendor"),
+            )
+            index.update_invoice(entry["invoice_id"], category=new_cat, file_path=new_path)
+            print(f"  {entry['vendor']}: {entry['old_category']} -> {new_cat}")
+            applied += 1
+        print(f"[done] Applied {applied}, skipped {skipped}.")
+        return
+
+    # --- classify mode: run LLM on invoices ---
     rows = index.find_invoices(year=args.year, category=args.category, status=args.status)
     if not rows:
         print("No matching invoices to reclassify.")
         return
 
+    dry_run = getattr(args, "dry_run", False)
     rows_with_files = [r for r in rows if r["file_path"] and os.path.isfile(r["file_path"])]
-    print(f"[i] Reclassifying {len(rows_with_files)} invoices (of {len(rows)} matched)...")
+    print(f"[i] {'Proposing' if dry_run else 'Reclassifying'} {len(rows_with_files)} invoices (of {len(rows)} matched)...")
 
     changed = 0
     unchanged = 0
+    errors = 0
+    plan = []
     for i, row in enumerate(rows_with_files, 1):
-        text = extract_text_from_pdf(row["file_path"])
+        file_path = os.path.realpath(row["file_path"])
+        try:
+            text = extract_text_from_pdf(file_path)
+        except (FileNotFoundError, Exception) as exc:
+            print(f"  [{i}] SKIP {row['vendor']}: {exc}")
+            errors += 1
+            continue
         new_category = categorize_invoice(text)
         old_category = row["category"]
 
         if new_category != old_category:
-            new_path = move_to_category(
-                file_path=row["file_path"],
-                category=new_category,
-                sorted_dir=SORTED_DIR,
-                invoice_date=row["invoice_date"],
-                vendor=row["vendor"],
-            )
-            index.update_invoice(row["invoice_id"], category=new_category, file_path=new_path)
-            print(f"  [{i}] {row['vendor']}: {old_category} -> {new_category}")
+            if dry_run:
+                plan.append({
+                    "invoice_id": row["invoice_id"],
+                    "vendor": row["vendor"],
+                    "subject": row["subject"],
+                    "invoice_date": row["invoice_date"],
+                    "old_category": old_category,
+                    "new_category": new_category,
+                    "file_path": file_path,
+                    "accept": True,
+                })
+                print(f"  [{i}] {row['vendor']}: {old_category} -> {new_category}")
+            else:
+                new_path = move_to_category(
+                    file_path=file_path,
+                    category=new_category,
+                    sorted_dir=SORTED_DIR,
+                    invoice_date=row["invoice_date"],
+                    vendor=row["vendor"],
+                )
+                index.update_invoice(row["invoice_id"], category=new_category, file_path=new_path)
+                print(f"  [{i}] {row['vendor']}: {old_category} -> {new_category}")
             changed += 1
         else:
             unchanged += 1
 
-    print(f"[done] Reclassified {changed + unchanged} items ({changed} changed, {unchanged} unchanged)")
+    if dry_run and plan:
+        os.makedirs(os.path.dirname(plan_file), exist_ok=True)
+        with open(plan_file, "w", encoding="utf-8") as f:
+            _json.dump(plan, f, indent=2, ensure_ascii=False)
+        print(f"\n[i] Wrote {len(plan)} proposed changes to {plan_file}")
+        print(f"    Review/edit the file, then run: python3 main.py reclassify --apply-plan")
+
+    print(f"[done] {'Proposed' if dry_run else 'Reclassified'} {changed + unchanged} items ({changed} changed, {unchanged} unchanged, {errors} errors)")
 
 
 def run_reindex(args) -> None:
+    from invoice_app.storage import CATEGORIES
+
     count = 0
-    for category in [
-        "Work Equipment",
-        "Insurance",
-        "Travel",
-        "Food",
-        "Subscriptions",
-        "Not Deductible",
-        "Lifestyle",
-        "Other",
-    ]:
+    # Scan both new EÜR-aligned and legacy category folder names
+    legacy_categories = [
+        "Work Equipment", "Insurance", "Travel", "Food",
+        "Subscriptions", "Not Deductible", "Lifestyle", "Other",
+    ]
+    all_categories = list(dict.fromkeys(CATEGORIES + legacy_categories))
+    for category in all_categories:
         category_dir = os.path.join(SORTED_DIR, category)
         if not os.path.isdir(category_dir):
             continue
@@ -490,6 +555,91 @@ def run_reindex(args) -> None:
     print(f"[✓] Reindexed invoices: {count}")
 
 
+CATEGORY_MIGRATION_MAP = {
+    "Work Equipment": "Arbeitsmittel",
+    "Insurance": "Versicherungen",
+    "Travel": "Reisekosten",
+    "Food": "Bewirtung",
+    "Subscriptions": "Übrige Betriebsausgaben",
+    "Not Deductible": "Nicht abzugsfähig",
+    "Lifestyle": "Nicht abzugsfähig",
+    "Other": "Übrige Betriebsausgaben",
+}
+
+
+def run_migrate_categories(args) -> None:
+    import shutil
+
+    conn = index.get_conn()
+
+    # 1. Update categories in DB
+    db_changes = 0
+    for old_cat, new_cat in CATEGORY_MIGRATION_MAP.items():
+        cursor = conn.execute(
+            "UPDATE invoices SET category = ? WHERE category = ?",
+            (new_cat, old_cat),
+        )
+        db_changes += cursor.rowcount
+    conn.commit()
+    print(f"[i] Updated {db_changes} DB rows with new categories.")
+
+    # 2. Rename Invoices/ subdirectories
+    renamed_dirs = 0
+    for old_cat, new_cat in CATEGORY_MIGRATION_MAP.items():
+        old_dir = os.path.join(SORTED_DIR, old_cat)
+        new_dir = os.path.join(SORTED_DIR, new_cat)
+        if not os.path.isdir(old_dir):
+            continue
+        if os.path.isdir(new_dir):
+            # Merge: move files from old into existing new dir
+            for fname in os.listdir(old_dir):
+                src = os.path.join(old_dir, fname)
+                dst = os.path.join(new_dir, fname)
+                if os.path.exists(dst):
+                    base, ext = os.path.splitext(fname)
+                    i = 1
+                    while os.path.exists(dst):
+                        dst = os.path.join(new_dir, f"{base}_{i}{ext}")
+                        i += 1
+                shutil.move(src, dst)
+            os.rmdir(old_dir)
+            print(f"  Merged {old_cat}/ into {new_cat}/")
+        else:
+            os.rename(old_dir, new_dir)
+            print(f"  Renamed {old_cat}/ → {new_cat}/")
+        renamed_dirs += 1
+
+    # 3. Update file_path column in DB for moved files
+    path_updates = 0
+    for old_cat, new_cat in CATEGORY_MIGRATION_MAP.items():
+        old_prefix = os.path.join(SORTED_DIR, old_cat) + os.sep
+        new_prefix = os.path.join(SORTED_DIR, new_cat) + os.sep
+        cursor = conn.execute(
+            "UPDATE invoices SET file_path = ? || substr(file_path, ?) "
+            "WHERE file_path LIKE ? || '%'",
+            (new_prefix, len(old_prefix) + 1, old_prefix),
+        )
+        path_updates += cursor.rowcount
+    conn.commit()
+
+    # 4. Normalize all file_path entries to realpath (fixes macOS NFD/NFC Unicode mismatches)
+    rows = conn.execute("SELECT invoice_id, file_path FROM invoices WHERE file_path IS NOT NULL").fetchall()
+    norm_updates = 0
+    for row in rows:
+        real = os.path.realpath(row[1])
+        if real != row[1]:
+            conn.execute("UPDATE invoices SET file_path = ? WHERE invoice_id = ?", (real, row[0]))
+            norm_updates += 1
+    conn.commit()
+    conn.close()
+
+    print(f"[i] Updated {path_updates} file paths in DB.")
+    if norm_updates:
+        print(f"[i] Normalized {norm_updates} paths (Unicode).")
+    print(f"[i] Renamed {renamed_dirs} directories.")
+    print("[✓] Category migration complete.")
+
+
 def parse_args():
     parser = argparse.ArgumentParser()
     sub = parser.add_subparsers(dest="command")
@@ -519,6 +669,7 @@ def parse_args():
 
     sub.add_parser("reindex", help="Reindex sorted invoice folders into SQLite")
     sub.add_parser("process-local", help="Process local PDFs in temp_invoices/")
+    sub.add_parser("migrate-categories", help="Migrate old categories to EÜR-aligned names")
 
     review_cmd = sub.add_parser("review", help="AI-assisted review of needs_review items")
     review_cmd.add_argument("--year", type=int)
@@ -530,6 +681,12 @@ def parse_args():
     reclassify_cmd.add_argument("--year", type=int)
     reclassify_cmd.add_argument("--category", help="Only reclassify items in this category")
     reclassify_cmd.add_argument("--status", default="processed", help="Only reclassify items with this status")
+    reclassify_cmd.add_argument("--dry-run", action="store_true",
+                                help="Write proposed changes to JSON plan file without applying")
+    reclassify_cmd.add_argument("--apply-plan", action="store_true",
+                                help="Apply changes from a previously saved plan file")
+    reclassify_cmd.add_argument("--plan-file", default="data/reclassify_plan.json",
+                                help="Path to plan file (default: data/reclassify_plan.json)")
 
     # Legacy flags retained for backward compatibility.
     parser.add_argument("--scan-gmail", action="store_true", help="Legacy alias for sync-gmail")
@@ -576,7 +733,7 @@ def main():
     if args.generate_bewirtungsbeleg:
         from bewirtungsbeleg import main as generate_bewirtungsbeleg
 
-        food_dir = os.path.join(SORTED_DIR, "Food")
+        food_dir = os.path.join(SORTED_DIR, "Bewirtung")
         if os.path.isdir(food_dir):
             for pdf in sorted(os.listdir(food_dir)):
                 if pdf.lower().endswith(".pdf"):
@@ -597,6 +754,8 @@ def main():
         run_review(args)
     elif args.command == "reclassify":
         run_reclassify(args)
+    elif args.command == "migrate-categories":
+        run_migrate_categories(args)
 
 
 if __name__ == "__main__":

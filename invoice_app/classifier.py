@@ -3,17 +3,50 @@ from __future__ import annotations
 import os
 
 import fitz
-import ollama
-import openai
 
 MODEL = os.getenv("OLLAMA_MODEL", "mistral")
-USE_OPENAI = str(os.getenv("USE_OPENAI", "")).lower() in {"1", "true", "yes"}
 OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
+ANTHROPIC_MODEL = os.getenv("ANTHROPIC_MODEL", "claude-haiku-4-5-20251001")
+
+# Backend priority: anthropic > openai > ollama
+USE_ANTHROPIC = str(os.getenv("USE_ANTHROPIC", "")).lower() in {"1", "true", "yes"} or bool(ANTHROPIC_API_KEY)
+USE_OPENAI = str(os.getenv("USE_OPENAI", "")).lower() in {"1", "true", "yes"}
+
+
+def _llm_complete(prompt: str, max_tokens: int = 30) -> str:
+    """Route a single-turn prompt to the best available LLM backend."""
+    if USE_ANTHROPIC and ANTHROPIC_API_KEY:
+        import anthropic
+
+        client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+        response = client.messages.create(
+            model=ANTHROPIC_MODEL,
+            max_tokens=max_tokens,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        return response.content[0].text.strip()
+
+    if USE_OPENAI and OPENAI_API_KEY:
+        import openai
+
+        client = openai.OpenAI(api_key=OPENAI_API_KEY)
+        response = client.chat.completions.create(
+            model=OPENAI_MODEL,
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=max_tokens,
+        )
+        return response.choices[0].message.content.strip()
+
+    import ollama
+
+    response = ollama.chat(model=MODEL, messages=[{"role": "user", "content": prompt}])
+    return response["message"]["content"].strip()
 
 
 def extract_text_from_pdf(pdf_path: str, limit: int = 3000) -> str:
-    doc = fitz.open(pdf_path)
+    doc = fitz.open(os.path.realpath(pdf_path))
     text = "\n".join(page.get_text() for page in doc)
     return text[:limit]
 
@@ -29,43 +62,40 @@ def infer_vendor(subject: str, text: str) -> str:
 
 
 def categorize_invoice(text: str) -> str:
-    prompt = f"""You are a tax assistant for a self-employed person (Selbständiger) in Germany.
-Categorize this invoice into one of these categories:
+    prompt = f"""You are a German tax assistant for a Freiberufler (freelance IT/software consultant).
+Categorize this invoice into one of the following EÜR-aligned categories (Anlage EÜR):
 
-- Work Equipment (computers, software, office supplies, business tools)
-- Insurance (business-related insurance, Haftpflicht, Berufshaftpflicht)
-- Travel (Deutsche Bahn, flights, Uber/Bolt rides for business, hotels, transport)
-- Food (business meals, Bewirtung)
-- Subscriptions (SaaS, cloud services, professional memberships)
-- Not Deductible (personal purchases, sneakers, entertainment, personal lifestyle)
-- Other (deductible items that don't fit above categories)
+- Fremdleistungen (Line 27: subcontractor invoices, freelancers paid for project work)
+- Arbeitsmittel (Line 28/29: computers, monitors, keyboards, software licenses, office supplies)
+- Reisekosten (Line 31: Deutsche Bahn, SBB, flights, Uber/Bolt, hotels, transport for business travel)
+- Bewirtung (Line 32: business meals with clients/partners, restaurant receipts)
+- Raumkosten (Line 34: rent, home office costs, coworking spaces)
+- Versicherungen (Line 35: Berufshaftpflicht, business insurance, professional liability)
+- Telekommunikation (Line 37: phone bills, internet, mobile contracts)
+- Übrige Betriebsausgaben (Line 38: SaaS, cloud hosting, domains, Google Ads, memberships, other deductible)
+- Nicht abzugsfähig (personal purchases, clothing, sneakers, entertainment, non-deductible items)
 
-The person is a Freiberufler (freelance IT/software). Consider:
-- Deutsche Bahn, SBB, Bolt, Uber rides, flights, hotels = Travel
-- Google Ads, cloud hosting, domains, SaaS tools = Subscriptions
-- Computers, monitors, keyboards, software licenses = Work Equipment
-- Business meals with clients/partners = Food (Bewirtung)
-- Personal purchases (clothing, sneakers, entertainment, personal electronics) = Not Deductible
+Key distinctions:
+- SaaS tools, cloud hosting, domains, ads = Übrige Betriebsausgaben (NOT Arbeitsmittel)
+- Phone/internet bills = Telekommunikation
+- Hardware (computers, monitors) = Arbeitsmittel
+- Deutsche Bahn, SBB, flights, Uber, Bolt, taxi, ride-hailing, hotels = Reisekosten (NOT Fremdleistungen)
+- Uber Eats, Lieferando, food delivery = Nicht abzugsfähig (personal, NOT Bewirtung)
+- Restaurant/meal receipts with business context = Bewirtung
+- Fremdleistungen is ONLY for subcontractors/agencies you hired for project work (e.g. developer, designer, consultant invoices)
 
-Only return the category name.
+Only return the category name, nothing else.
 
 Invoice:
 {text}
 """
-    if USE_OPENAI and OPENAI_API_KEY:
-        client = openai.OpenAI(api_key=OPENAI_API_KEY)
-        response = client.chat.completions.create(
-            model=OPENAI_MODEL,
-            messages=[{"role": "user", "content": prompt}],
-            max_tokens=10,
-        )
-        result = response.choices[0].message.content.strip()
-    else:
-        response = ollama.chat(model=MODEL, messages=[{"role": "user", "content": prompt}])
-        result = response["message"]["content"].strip()
-
-    allowed = {"Work Equipment", "Insurance", "Travel", "Food", "Subscriptions", "Not Deductible", "Other"}
-    return result if result in allowed else "Other"
+    result = _llm_complete(prompt, max_tokens=10)
+    allowed = {
+        "Fremdleistungen", "Arbeitsmittel", "Reisekosten", "Bewirtung",
+        "Raumkosten", "Versicherungen", "Telekommunikation",
+        "Übrige Betriebsausgaben", "Nicht abzugsfähig",
+    }
+    return result if result in allowed else "Übrige Betriebsausgaben"
 
 
 def triage_review_item(subject: str, sender: str) -> str:
@@ -82,18 +112,7 @@ Classify as one of:
 Return only one of: not_invoice, likely_invoice, uncertain"""
 
     try:
-        if USE_OPENAI and OPENAI_API_KEY:
-            client = openai.OpenAI(api_key=OPENAI_API_KEY)
-            response = client.chat.completions.create(
-                model=OPENAI_MODEL,
-                messages=[{"role": "user", "content": prompt}],
-                max_tokens=10,
-            )
-            result = response.choices[0].message.content.strip().lower()
-        else:
-            response = ollama.chat(model=MODEL, messages=[{"role": "user", "content": prompt}])
-            result = response["message"]["content"].strip().lower()
-
+        result = _llm_complete(prompt, max_tokens=10).lower()
         if result in {"not_invoice", "likely_invoice", "uncertain"}:
             return result
         return "uncertain"
@@ -114,21 +133,9 @@ Return only the URLs that are most likely invoice/receipt PDF download links, on
 If none of the links appear to be invoice download links, return "NONE".
 """
     try:
-        if USE_OPENAI and OPENAI_API_KEY:
-            client = openai.OpenAI(api_key=OPENAI_API_KEY)
-            response = client.chat.completions.create(
-                model=OPENAI_MODEL,
-                messages=[{"role": "user", "content": prompt}],
-                max_tokens=300,
-            )
-            result = response.choices[0].message.content.strip()
-        else:
-            response = ollama.chat(model=MODEL, messages=[{"role": "user", "content": prompt}])
-            result = response["message"]["content"].strip()
-
+        result = _llm_complete(prompt, max_tokens=300)
         if result.upper() == "NONE":
             return []
         return [line.strip() for line in result.splitlines() if line.strip().startswith("http")]
     except Exception:
         return []
-
