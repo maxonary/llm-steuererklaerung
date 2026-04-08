@@ -30,4 +30,5 @@ dependencies = [
     "supabase>=2.15.1",
     "uvicorn>=0.34.2",
     "watchdog>=6.0.0",
+    "supabase>=2.3.0",
 ]

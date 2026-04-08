@@ -143,3 +143,47 @@ Prompts you to generate a Bewirtungsbeleg for each invoice in the `Invoices/Bewi
 python3 main.py --full-run
 ```
 Runs a full workflow: Gmail sync, local invoice processing, and travel report generation for the current year.
+
+## Mermaid Diagram
+
+```mermaid
+flowchart TD
+    A[Start] --> B[Load Config & Env Vars]
+    B --> C[Parse Arguments]
+    C --> D{Full Run?}
+    D -->|Yes| E[Enable Gmail Scan + Local Processing + Travel Report]
+    D -->|No| F[Check Individual Flags]
+
+    F --> G[Load Calendar Context]
+    E --> G
+
+    G --> H{Scan Gmail?}
+    H -->|Yes| I[Gmail Auth]
+    I --> J[Search for Emails]
+    J --> K[Filter & Process Emails]
+    K --> L[Download Attachments]
+    K --> M[Extract Invoice Links with Ollama]
+    L --> N[Extract Text from PDF]
+    M --> O[Download PDF from URL]
+
+    N --> P[Categorize Invoice with LLM]
+    O --> P
+    P --> Q[Store to Supabase]
+    Q --> R[Sort to Category Folder]
+
+    H -->|No| S{Process Local?}
+    S -->|Yes| T[Watch `temp_invoices/` with Watchdog]
+    T --> U[Extract Text, Categorize, Store, Sort]
+
+    S --> V{Generate Travel Report?}
+    V -->|Yes| W[Run Travel Report Generation]
+
+    V --> X{Generate Bewirtungsbeleg?}
+    X -->|Yes| Y[Loop Food PDFs]
+    Y --> Z[Run `generate_bewirtungsbeleg`]
+
+    Z --> End
+    R --> End
+    U --> End
+    W --> End
+```

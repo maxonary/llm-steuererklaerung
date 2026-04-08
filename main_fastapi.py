@@ -1,12 +1,14 @@
 import os
 from fastapi import FastAPI, UploadFile, File, Request, Query
-from fastapi.responses import RedirectResponse, JSONResponse
+from fastapi.responses import RedirectResponse, JSONResponse, StreamingResponse
 from supabase import create_client, Client
 from google_auth_oauthlib.flow import Flow
 from googleapiclient.discovery import build
 import tempfile
 import ollama
 from dotenv import load_dotenv
+from io import BytesIO
+from storage3.exceptions import StorageApiError
 
 load_dotenv()
 
@@ -28,22 +30,48 @@ user_credentials = {}
 @app.post("/upload")
 async def upload_file(file: UploadFile = File(...)):
     contents = await file.read()
-    # Upload to Supabase Storage
-    supabase.storage.from_('invoices').upload(file.filename, contents, {"content-type": file.content_type})
-    # Store metadata in Supabase DB (optional)
+    try:
+        supabase.storage.from_('invoices').upload(
+            file.filename, contents, {"content-type": file.content_type}
+        )
+    except StorageApiError as e:
+        if e.error.get('statusCode') == 409:
+            base, ext = os.path.splitext(file.filename)
+            i = 1
+            new_filename = f"{base}_{i}{ext}"
+            while True:
+                try:
+                    supabase.storage.from_('invoices').upload(
+                        new_filename, contents, {"content-type": file.content_type}
+                    )
+                    file.filename = new_filename  # update for DB insert
+                    break
+                except StorageApiError as e_inner:
+                    if e_inner.error.get('statusCode') == 409:
+                        i += 1
+                        new_filename = f"{base}_{i}{ext}"
+                    else:
+                        raise
+        else:
+            raise  # re-raise if it's a different error
+
+    # (optional) insert metadata into DB
     supabase.table('invoices').insert({"pdfUrl": file.filename}).execute()
     return {"pdfUrl": file.filename}
 
 @app.get("/retrieve")
 def retrieve_file(filename: str = Query(...)):
     # Download file from Supabase Storage
-    res = supabase.storage.from_('invoices').download(filename)
-    return JSONResponse(content={"file": res})
+    file_bytes = supabase.storage.from_('invoices').download(filename)
+
+    return StreamingResponse(BytesIO(file_bytes), media_type="application/pdf", headers={
+        "Content-Disposition": f"attachment; filename={filename}"
+    })
 
 @app.post("/process")
 def process_file(filename: str = Query(...)):
     # Download file from Supabase Storage
-    file_bytes = supabase.storage().from_('invoices').download(filename)
+    file_bytes = supabase.storage.from_('invoices').download(filename)
     # Use Ollama for LLM processing (example: summarize file)
     prompt = f"Summarize the following document:\n\n{file_bytes[:2000].decode(errors='ignore')}"
     response = ollama.chat(model="mistral", messages=[{"role": "user", "content": prompt}])
@@ -87,4 +115,4 @@ def gmail_fetch():
     service = build('gmail', 'v1', credentials=credentials)
     results = service.users().messages().list(userId='me', maxResults=5).execute()
     messages = results.get('messages', [])
-    return {"messages": messages} 
+    return {"messages": messages}
